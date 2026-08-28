@@ -1,6 +1,6 @@
 "use client";
 
-import type { RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import {
   FILES,
   RANKS,
@@ -10,16 +10,21 @@ import {
   squareName,
   type Board as BoardArray,
   type Move,
+  type Piece,
 } from "@/app/lib/tinyhouse/engine";
 import type { BoardTheme } from "@/app/lib/tinyhouse/themes";
 import { CLASSIFICATION_STYLE } from "@/app/lib/engine/classification";
 import type { Classification } from "@/app/lib/engine/types";
 import PieceIcon from "./PieceIcon";
 
-/** The engine's suggestion, drawn over the board during a review. */
+/**
+ * The engine's suggestion, drawn over the board during a review: an arrow for
+ * a board move, or a translucent piece on the square a drop would land on.
+ */
 export interface BoardArrow {
   from: number | null;
   to: number;
+  piece?: Piece | null;
 }
 
 interface BoardProps {
@@ -66,14 +71,60 @@ export default function Board({
     for (const file of files) squares.push(idx(file, rank));
   }
 
-  /** Centre of a square in the 0..4 grid coordinate space of the overlay. */
-  const centre = (square: number): [number, number] => {
+  /** Grid position of a square, in columns/rows from the top left. */
+  const place = (square: number): [number, number] => {
     const file = fileOf(square);
     const rank = rankOf(square);
-    const column = flipped ? 3 - file : file;
-    const row = flipped ? rank : 3 - rank;
+    return [flipped ? 3 - file : file, flipped ? rank : 3 - rank];
+  };
+
+  /** Centre of a square in the 0..4 coordinate space of the arrow overlay. */
+  const centre = (square: number): [number, number] => {
+    const [column, row] = place(square);
     return [column + 0.5, row + 0.5];
   };
+
+  // Slide the piece that just moved in from where it came, so the board reads
+  // as motion rather than a jump. Runs on the element already in place, so
+  // there is no ghost element to keep in sync.
+  const animated = useRef<Move | null>(null);
+  useEffect(() => {
+    const move = lastMove;
+    if (!move || move === animated.current) return;
+    animated.current = move;
+
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const grid = boardRef.current;
+    const cell = grid?.querySelector<HTMLElement>(`[data-square="${move.to}"]`);
+    const piece = cell?.querySelector<HTMLElement>("svg");
+    if (!grid || !cell || !piece) return;
+
+    const size = grid.getBoundingClientRect().width / 4;
+    const frames: Keyframe[] =
+      move.kind === "move"
+        ? (() => {
+            const [fromColumn, fromRow] = place(move.from);
+            const [toColumn, toRow] = place(move.to);
+            const dx = (fromColumn - toColumn) * size;
+            const dy = (fromRow - toRow) * size;
+            return [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "translate(0, 0)" }];
+          })()
+        : [
+            { transform: "scale(0.55)", opacity: 0 },
+            { transform: "scale(1)", opacity: 1 },
+          ];
+
+    cell.style.zIndex = "30";
+    const animation = piece.animate(frames, {
+      duration: move.kind === "move" ? 160 : 130,
+      easing: "cubic-bezier(0.22, 0.61, 0.36, 1)",
+    });
+    const clear = () => {
+      cell.style.zIndex = "";
+    };
+    animation.finished.then(clear, clear);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastMove, flipped, boardRef]);
 
   return (
     <div
@@ -158,6 +209,17 @@ export default function Board({
                   style={{ backgroundColor: theme.target, opacity: 0.75 }}
                 />
               )}
+
+              {/* A suggested drop: show the piece itself, faintly. */}
+              {arrow?.from === null && arrow.to === square && arrow.piece && (
+                <PieceIcon
+                  type={arrow.piece.type}
+                  color={arrow.piece.color}
+                  theme={theme}
+                  className="pointer-events-none absolute h-[80%] w-[80%]"
+                  style={{ opacity: 0.45 }}
+                />
+              )}
               {isCapture && (
                 <span
                   className="pointer-events-none absolute inset-[6%] rounded-full border-[6px]"
@@ -196,27 +258,16 @@ export default function Board({
           );
         })}
 
-        {arrow && (
+        {arrow && arrow.from !== null && (
           <svg
             viewBox="0 0 4 4"
             preserveAspectRatio="none"
             className="pointer-events-none absolute inset-0 h-full w-full"
             aria-hidden="true"
           >
-            {arrow.from === null ? (
-              // A drop: mark the landing square instead of drawing a line.
-              <circle
-                cx={centre(arrow.to)[0]}
-                cy={centre(arrow.to)[1]}
-                r={0.34}
-                fill="none"
-                stroke={theme.target}
-                strokeWidth={0.11}
-                opacity={0.9}
-              />
-            ) : (
+            {
               (() => {
-                const [x1, y1] = centre(arrow.from);
+                const [x1, y1] = centre(arrow.from as number);
                 const [x2, y2] = centre(arrow.to);
                 const dx = x2 - x1;
                 const dy = y2 - y1;
@@ -249,7 +300,7 @@ export default function Board({
                   </g>
                 );
               })()
-            )}
+            }
           </svg>
         )}
       </div>

@@ -107,9 +107,32 @@ export default function ReviewPanel({
         </svg>
       </div>
 
-      {/* What happened on the selected move */}
+      {/* Navigation sits above the variable-height blocks so the buttons never
+          move under the cursor while stepping through quickly. */}
+      <div className="flex items-center justify-center gap-1">
+        {[
+          { label: "⏮", delta: -position, title: "Start" },
+          { label: "◀", delta: -1, title: "Previous" },
+          { label: "▶", delta: 1, title: "Next" },
+          { label: "⏭", delta: plies.length - position, title: "End" },
+        ].map((button) => (
+          <button
+            key={button.title}
+            type="button"
+            title={button.title}
+            onClick={() => move(button.delta)}
+            className="h-8 flex-1 rounded text-sm font-bold transition hover:brightness-125"
+            style={{ backgroundColor: "rgba(255,255,255,0.1)" }}
+          >
+            {button.label}
+          </button>
+        ))}
+      </div>
+
+      {/* What happened on the selected move. Fixed height: its content varies
+          between one and three lines. */}
       <div
-        className="rounded-lg px-2 py-1.5 text-xs leading-snug"
+        className="h-[4.75rem] shrink-0 overflow-hidden rounded-lg px-2 py-1.5 text-xs leading-snug"
         style={{ backgroundColor: "rgba(255,255,255,0.07)" }}
       >
         {selected ? (
@@ -147,27 +170,6 @@ export default function ReviewPanel({
             Engine plays <strong>{upcoming.best_san}</strong> here.
           </div>
         )}
-      </div>
-
-      {/* Navigation */}
-      <div className="flex items-center justify-center gap-1">
-        {[
-          { label: "⏮", delta: -position, title: "Start" },
-          { label: "◀", delta: -1, title: "Previous" },
-          { label: "▶", delta: 1, title: "Next" },
-          { label: "⏭", delta: plies.length - position, title: "End" },
-        ].map((button) => (
-          <button
-            key={button.title}
-            type="button"
-            title={button.title}
-            onClick={() => move(button.delta)}
-            className="h-7 flex-1 rounded text-sm font-bold transition hover:brightness-125"
-            style={{ backgroundColor: "rgba(255,255,255,0.1)" }}
-          >
-            {button.label}
-          </button>
-        ))}
       </div>
 
       {/* Move list */}

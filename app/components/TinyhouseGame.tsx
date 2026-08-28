@@ -19,12 +19,11 @@ import { fetchBestMove, fetchReview } from "@/app/lib/engine/client";
 import type { EngineLevel, GameReview } from "@/app/lib/engine/types";
 import Board, { type BoardArrow } from "./Board";
 import EvalBar from "./EvalBar";
-import GameSetup, { type OpponentMode } from "./GameSetup";
+import MatchPanel, { type OpponentMode } from "./MatchPanel";
 import PieceIcon from "./PieceIcon";
 import PromotionDialog from "./PromotionDialog";
 import ReserveBank from "./ReserveBank";
 import ReviewPanel from "./ReviewPanel";
-import ThemePicker from "./ThemePicker";
 import { sameSelection, type Selection } from "./types";
 
 const THEME_STORAGE_KEY = "tinyhouse:theme";
@@ -78,7 +77,8 @@ export default function TinyhouseGame() {
   const [chosenTheme, setChosenTheme] = useState<string | null>(null);
   const boardRef = useRef<HTMLDivElement | null>(null);
 
-  // Opponent
+  // Opponent. Settings are chosen before a match and fixed while it runs.
+  const [started, setStarted] = useState(false);
   const [mode, setMode] = useState<OpponentMode>("human");
   const [level, setLevel] = useState(3);
   const [humanSide, setHumanSide] = useState<Color>("w");
@@ -86,6 +86,8 @@ export default function TinyhouseGame() {
   const [engineError, setEngineError] = useState<string | null>(null);
   /** Bumped by the retry button so the bot effect runs again after a failure. */
   const [retryToken, setRetryToken] = useState(0);
+
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Review
   const [review, setReview] = useState<GameReview | null>(null);
@@ -129,10 +131,10 @@ export default function TinyhouseGame() {
   const displayed = inReview ? (positions[reviewPosition] ?? game) : game;
   const displayedOutcome = inReview ? getOutcome(displayed) : outcome;
 
-  const botToMove = mode === "bot" && game.turn === botSide && !outcome.over;
+  const botToMove = started && mode === "bot" && game.turn === botSide && !outcome.over;
   /** A request is in flight for exactly as long as it is the bot's turn. */
   const thinking = botToMove && !engineError && promotion === null && !inReview;
-  const locked = outcome.over || promotion !== null || inReview || botToMove;
+  const locked = !started || outcome.over || promotion !== null || inReview || botToMove;
 
   const movesForOrigin = useCallback(
     (origin: Selection) =>
@@ -261,7 +263,7 @@ export default function TinyhouseGame() {
     [locked, selection, targets, selectionMoves, commit, pieceForOrigin, movesForOrigin],
   );
 
-  const restart = useCallback(() => {
+  const resetBoard = useCallback(() => {
     setGame(createGame());
     setSelection(null);
     setPromotion(null);
@@ -270,6 +272,18 @@ export default function TinyhouseGame() {
     setReviewPosition(0);
     setEngineError(null);
   }, []);
+
+  /** Begin a match with the settings currently chosen. */
+  const startMatch = useCallback(() => {
+    resetBoard();
+    setStarted(true);
+  }, [resetBoard]);
+
+  /** Back to the setup screen, where the settings can be changed again. */
+  const newMatch = useCallback(() => {
+    resetBoard();
+    setStarted(false);
+  }, [resetBoard]);
 
   // --- engine: the bot's move ------------------------------------------------
 
@@ -383,7 +397,13 @@ export default function TinyhouseGame() {
   const arrow: BoardArrow | null = useMemo(() => {
     if (!reviewPly) return null;
     const best = moveFromUci(reviewPly.best_uci);
-    return { from: best.kind === "move" ? best.from : null, to: best.to };
+    if (best.kind === "move") return { from: best.from, to: best.to };
+    // A suggested drop has no origin square, so show the piece itself.
+    return {
+      from: null,
+      to: best.to,
+      piece: { type: best.piece, color: reviewPly.color },
+    };
   }, [reviewPly]);
   const badge = previousPly
     ? { square: moveFromUci(previousPly.uci).to, classification: previousPly.classification }
@@ -396,6 +416,7 @@ export default function TinyhouseGame() {
 
   const flipped = mode === "bot" && humanSide === "b";
   const canReview = uciMoves.length >= 2;
+
 
   return (
     <div
@@ -423,44 +444,11 @@ export default function TinyhouseGame() {
           </span>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <GameSetup
-            mode={mode}
-            level={level}
-            humanSide={humanSide}
-            levels={levels}
-            theme={theme}
-            onModeChange={(next) => {
-              setMode(next);
-              restart();
-            }}
-            onLevelChange={setLevel}
-            onSideChange={(side) => {
-              setHumanSide(side);
-              restart();
-            }}
-          />
-          {!inReview && (
-            <button
-              type="button"
-              onClick={startReview}
-              disabled={!canReview || reviewing}
-              className="h-8 rounded-full px-3 text-xs font-bold uppercase tracking-wide transition hover:brightness-110 disabled:opacity-40"
-              style={{ backgroundColor: theme.surface, color: theme.surfaceText }}
-            >
-              {reviewing ? "Analysing…" : "Review"}
-            </button>
-          )}
-          <ThemePicker theme={theme} onSelect={selectTheme} />
-          <button
-            type="button"
-            onClick={restart}
-            className="h-8 shrink-0 rounded-full px-4 text-xs font-bold uppercase tracking-wide transition hover:brightness-110"
-            style={{ backgroundColor: theme.accent, color: theme.backdrop }}
-          >
-            Restart
-          </button>
-        </div>
+        <span className="text-xs opacity-60 sm:text-sm">
+          {mode === "bot"
+            ? `vs ${levels.find((entry) => entry.level === level)?.name ?? "Bot"}`
+            : "2 players"}
+        </span>
       </header>
 
       {engineError && (
@@ -484,28 +472,49 @@ export default function TinyhouseGame() {
         </div>
       )}
 
-      <main className="flex min-h-0 flex-1 flex-col gap-2 px-2 pb-2 sm:px-3 xl:flex-row xl:justify-center xl:gap-3">
-        {/* Banks and board: a row on all but the narrowest screens. */}
-        <div className="flex min-h-0 flex-1 flex-col items-stretch gap-2 sm:flex-row sm:justify-center sm:gap-3">
-        <ReserveBank
-          color="b"
-          reserve={displayed.reserves.b}
+      <main className="flex min-h-0 flex-1 flex-col gap-2 px-2 pb-2 md:flex-row md:gap-3 md:px-3">
+        <MatchPanel
           theme={theme}
-          active={!locked && game.turn === "b"}
-          selectedPiece={game.turn === "b" && selection?.kind === "reserve" ? selection.piece : null}
-          draggingPiece={drag?.origin.kind === "reserve" ? drag.origin.piece : null}
-          onPointerDown={(event, piece) => handlePointerDown(event, { kind: "reserve", piece })}
-          onActivate={(piece) => activate({ kind: "reserve", piece })}
+          mode={mode}
+          level={level}
+          humanSide={humanSide}
+          levels={levels}
+          started={started}
+          canReview={canReview}
+          reviewing={reviewing}
+          inReview={inReview}
+          open={settingsOpen}
+          onToggle={() => setSettingsOpen((current) => !current)}
+          onModeChange={setMode}
+          onLevelChange={setLevel}
+          onSideChange={setHumanSide}
+          onStart={() => {
+            setSettingsOpen(false);
+            startMatch();
+          }}
+          onNewMatch={() => {
+            setSettingsOpen(false);
+            newMatch();
+          }}
+          onReview={() => {
+            setSettingsOpen(false);
+            startReview();
+          }}
+          onThemeSelect={selectTheme}
         />
 
-        {/* The board is sized from whatever space is left, so it never scrolls. */}
+        {/* Board and reserves, sized from the space that is left so the page
+            never scrolls. The extra width covers the two banks and the eval
+            bar, which keeps them tight against the board. */}
         <div
           className="flex min-h-0 min-w-0 flex-1 items-center justify-center"
           style={{ containerType: "size" }}
         >
           <div
-            className="flex items-stretch gap-2"
-            style={{ width: inReview ? "min(100cqw, calc(100cqh + 1.75rem))" : "min(100cqw, 100cqh)" }}
+            className={`flex flex-col items-stretch gap-2 sm:flex-row ${
+              inReview ? "[--extra:-6.5rem] sm:[--extra:10rem]" : "[--extra:-6.5rem] sm:[--extra:8rem]"
+            }`}
+            style={{ width: "min(100cqw, calc(100cqh + var(--extra)))" }}
           >
             {inReview && (
               <EvalBar
@@ -515,6 +524,20 @@ export default function TinyhouseGame() {
                 flipped={flipped}
               />
             )}
+
+            <ReserveBank
+              color="b"
+              reserve={displayed.reserves.b}
+              theme={theme}
+              active={!locked && game.turn === "b"}
+              selectedPiece={
+                game.turn === "b" && selection?.kind === "reserve" ? selection.piece : null
+              }
+              draggingPiece={drag?.origin.kind === "reserve" ? drag.origin.piece : null}
+              onPointerDown={(event, piece) => handlePointerDown(event, { kind: "reserve", piece })}
+              onActivate={(piece) => activate({ kind: "reserve", piece })}
+            />
+
             <div className="relative min-w-0 flex-1">
             <Board
               board={displayed.board}
@@ -556,30 +579,44 @@ export default function TinyhouseGame() {
                     )}
                     <button
                       type="button"
-                      onClick={restart}
+                      onClick={startMatch}
                       className="rounded-full px-4 py-1.5 text-xs font-bold uppercase tracking-wide"
                       style={{ backgroundColor: theme.accent, color: theme.backdrop }}
                     >
-                      New game
+                      Rematch
                     </button>
                   </div>
                 </div>
               </div>
             )}
-            </div>
-          </div>
-        </div>
 
-        <ReserveBank
-          color="w"
-          reserve={displayed.reserves.w}
-          theme={theme}
-          active={!locked && game.turn === "w"}
-          selectedPiece={game.turn === "w" && selection?.kind === "reserve" ? selection.piece : null}
-          draggingPiece={drag?.origin.kind === "reserve" ? drag.origin.piece : null}
-          onPointerDown={(event, piece) => handlePointerDown(event, { kind: "reserve", piece })}
-          onActivate={(piece) => activate({ kind: "reserve", piece })}
-        />
+            {!started && (
+              <div className="absolute inset-0 z-20 flex items-center justify-center rounded-lg bg-black/50 sm:rounded-xl">
+                <button
+                  type="button"
+                  onClick={startMatch}
+                  className="rounded-xl px-6 py-3 text-sm font-black uppercase tracking-wide shadow-2xl transition hover:brightness-110"
+                  style={{ backgroundColor: theme.accent, color: theme.backdrop }}
+                >
+                  Start match
+                </button>
+              </div>
+            )}
+            </div>
+
+            <ReserveBank
+              color="w"
+              reserve={displayed.reserves.w}
+              theme={theme}
+              active={!locked && game.turn === "w"}
+              selectedPiece={
+                game.turn === "w" && selection?.kind === "reserve" ? selection.piece : null
+              }
+              draggingPiece={drag?.origin.kind === "reserve" ? drag.origin.piece : null}
+              onPointerDown={(event, piece) => handlePointerDown(event, { kind: "reserve", piece })}
+              onActivate={(piece) => activate({ kind: "reserve", piece })}
+            />
+          </div>
         </div>
 
         <aside
