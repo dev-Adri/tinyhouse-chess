@@ -38,12 +38,22 @@ export interface GameState {
   reserves: Record<Color, Reserve>;
   lastMove: Move | null;
   history: HistoryEntry[];
+  /** One position key per position reached, used to spot repetitions. */
+  keys: string[];
 }
 
 export type GameOutcome =
   | { over: false; inCheck: boolean }
   | { over: true; reason: "checkmate"; winner: Color; inCheck: true }
-  | { over: true; reason: "stalemate"; winner: null; inCheck: false };
+  | { over: true; reason: "stalemate"; winner: null; inCheck: false }
+  | { over: true; reason: "repetition" | "ply-limit"; winner: null; inCheck: boolean };
+
+/**
+ * Captures never remove material from a Tinyhouse game, so without these two
+ * rules a game need never end. They match the Python engine.
+ */
+export const MAX_PLIES = 300;
+export const REPETITION_LIMIT = 3;
 
 export const FILES = ["a", "b", "c", "d"] as const;
 export const RANKS = ["1", "2", "3", "4"] as const;
@@ -118,13 +128,48 @@ export function createInitialBoard(): Board {
 }
 
 export function createGame(): GameState {
-  return {
+  const state: GameState = {
     board: createInitialBoard(),
     turn: "w",
     reserves: { w: emptyReserve(), b: emptyReserve() },
     lastMove: null,
     history: [],
+    keys: [],
   };
+  state.keys = [toFen(state)];
+  return state;
+}
+
+/**
+ * Crazyhouse-style FEN: board (rank 4 first, `~` marks a promoted piece), the
+ * two reserves in brackets, then the side to move — `fhwk/3p/P3/KWHF[] w`.
+ * Doubles as the repetition key, and is the wire format the Python engine reads.
+ */
+export function toFen(state: GameState): string {
+  const rows: string[] = [];
+  for (let rank = 3; rank >= 0; rank--) {
+    let row = "";
+    let gap = 0;
+    for (let file = 0; file < 4; file++) {
+      const piece = state.board[idx(file, rank)];
+      if (!piece) {
+        gap += 1;
+        continue;
+      }
+      if (gap) {
+        row += String(gap);
+        gap = 0;
+      }
+      row += piece.color === "w" ? piece.type : piece.type.toLowerCase();
+      if (piece.promoted) row += "~";
+    }
+    if (gap) row += String(gap);
+    rows.push(row || "4");
+  }
+  let hands = "";
+  for (const type of DROP_TYPES) hands += type.repeat(state.reserves.w[type]);
+  for (const type of DROP_TYPES) hands += type.toLowerCase().repeat(state.reserves.b[type]);
+  return `${rows.join("/")}[${hands}] ${state.turn}`;
 }
 
 export const pawnDirection = (color: Color) => (color === "w" ? 1 : -1);
@@ -276,16 +321,27 @@ export function legalMoves(state: GameState): Move[] {
 
 export function getOutcome(state: GameState, moves = legalMoves(state)): GameOutcome {
   const inCheck = isInCheck(state.board, state.turn);
-  if (moves.length > 0) return { over: false, inCheck };
-  if (inCheck) {
-    return {
-      over: true,
-      reason: "checkmate",
-      winner: state.turn === "w" ? "b" : "w",
-      inCheck: true,
-    };
+  if (moves.length === 0) {
+    if (inCheck) {
+      return {
+        over: true,
+        reason: "checkmate",
+        winner: state.turn === "w" ? "b" : "w",
+        inCheck: true,
+      };
+    }
+    return { over: true, reason: "stalemate", winner: null, inCheck: false };
   }
-  return { over: true, reason: "stalemate", winner: null, inCheck: false };
+  const current = state.keys[state.keys.length - 1];
+  let repeats = 0;
+  for (const key of state.keys) if (key === current) repeats += 1;
+  if (repeats >= REPETITION_LIMIT) {
+    return { over: true, reason: "repetition", winner: null, inCheck };
+  }
+  if (state.history.length >= MAX_PLIES) {
+    return { over: true, reason: "ply-limit", winner: null, inCheck };
+  }
+  return { over: false, inCheck };
 }
 
 export function movesEqual(a: Move, b: Move): boolean {
@@ -343,7 +399,9 @@ export function applyMove(state: GameState, move: Move): GameState {
     reserves,
     lastMove: move,
     history: state.history,
+    keys: state.keys,
   };
+  next.keys = [...state.keys, toFen(next)];
 
   const outcome = getOutcome(next);
   const suffix = outcome.over && outcome.reason === "checkmate" ? "#" : outcome.inCheck ? "+" : "";

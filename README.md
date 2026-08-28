@@ -1,36 +1,66 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Tinyhouse
 
-## Getting Started
+A playable browser version of **Tinyhouse** — chess.com's 4×4 variant with
+crazyhouse-style piece drops — plus a Python engine that plays it and reviews
+your games.
 
-First, run the development server:
+## Running it
+
+Two processes: the Next.js app, and the engine that backs bot play and game
+review. The board itself works without the engine; only the bot and the review
+need it.
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+```bash
+cd engine && python -m tinyhouse serve
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Then open <http://localhost:3000>. The app proxies to the engine through
+`/api/engine/*`; set `ENGINE_URL` if it does not live on
+`http://127.0.0.1:8000`.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## The game
 
-## Learn More
+A 4×4 board with five piece types per side:
 
-To learn more about Next.js, take a look at the following resources:
+| | Piece | Moves |
+| --- | --- | --- |
+| K | King | one step in any direction |
+| P | Pawn | one step forward, captures diagonally, promotes on the far rank to W, F or H |
+| W | Wazir | one step orthogonally |
+| F | Ferz | one step diagonally |
+| H | Hors | a knight's leap, but blocked if a piece sits on the first orthogonal step (a xiangqi horse) |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Captured pieces switch sides and go into the captor's reserve; instead of
+moving, a player may drop one on any empty square. Pawns may not be dropped on
+the 1st or 4th rank, and a promoted piece reverts to a pawn when captured.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Because captures never remove material from the game, two rules keep it finite:
+**threefold repetition** and **300 plies** are draws. Both engines agree on
+this.
 
-## Deploy on Vercel
+## Layout
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| Path | What it is |
+| --- | --- |
+| `app/lib/tinyhouse/engine.ts` | the rules, in the browser |
+| `app/lib/tinyhouse/uci.ts` | the move format shared with Python |
+| `app/components/` | board, reserves, promotion dialog, themes, review panel |
+| `app/api/engine/[...path]/route.ts` | proxy to the Python engine |
+| `engine/` | the Python engine, its API, and its tests — see [engine/README.md](engine/README.md) |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The two rule implementations are pinned to each other by perft: both count
+exactly 1,355,253 leaf nodes at depth 7 from the starting position.
+
+## Checks
+
+```bash
+npx tsc --noEmit && npx eslint . && npm run build
+```
+
+```bash
+cd engine && python -m unittest discover -s tests -t .
+```

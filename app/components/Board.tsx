@@ -12,7 +12,15 @@ import {
   type Move,
 } from "@/app/lib/tinyhouse/engine";
 import type { BoardTheme } from "@/app/lib/tinyhouse/themes";
+import { CLASSIFICATION_STYLE } from "@/app/lib/engine/classification";
+import type { Classification } from "@/app/lib/engine/types";
 import PieceIcon from "./PieceIcon";
+
+/** The engine's suggestion, drawn over the board during a review. */
+export interface BoardArrow {
+  from: number | null;
+  to: number;
+}
 
 interface BoardProps {
   board: BoardArray;
@@ -24,6 +32,10 @@ interface BoardProps {
   checkSquare: number | null;
   lastMove: Move | null;
   disabled: boolean;
+  /** Black at the bottom. */
+  flipped?: boolean;
+  arrow?: BoardArrow | null;
+  badge?: { square: number; classification: Classification } | null;
   onSquarePointerDown: (event: React.PointerEvent, square: number) => void;
   onSquareActivate: (square: number) => void;
 }
@@ -38,6 +50,9 @@ export default function Board({
   checkSquare,
   lastMove,
   disabled,
+  flipped = false,
+  arrow = null,
+  badge = null,
   onSquarePointerDown,
   onSquareActivate,
 }: BoardProps) {
@@ -45,20 +60,31 @@ export default function Board({
   const lastTo = lastMove ? lastMove.to : null;
 
   const squares: number[] = [];
-  for (let rank = 3; rank >= 0; rank--) {
-    for (let file = 0; file < 4; file++) squares.push(idx(file, rank));
+  const ranks = flipped ? [0, 1, 2, 3] : [3, 2, 1, 0];
+  const files = flipped ? [3, 2, 1, 0] : [0, 1, 2, 3];
+  for (const rank of ranks) {
+    for (const file of files) squares.push(idx(file, rank));
   }
+
+  /** Centre of a square in the 0..4 grid coordinate space of the overlay. */
+  const centre = (square: number): [number, number] => {
+    const file = fileOf(square);
+    const rank = rankOf(square);
+    const column = flipped ? 3 - file : file;
+    const row = flipped ? rank : 3 - rank;
+    return [column + 0.5, row + 0.5];
+  };
 
   return (
     <div
-      className="w-full select-none rounded-lg p-1.5 shadow-2xl sm:rounded-xl sm:p-2"
+      className="relative w-full select-none rounded-lg p-1.5 shadow-2xl sm:rounded-xl sm:p-2"
       style={{ backgroundColor: theme.frame }}
     >
       <div
         ref={boardRef}
         role="grid"
         aria-label="Tinyhouse board"
-        className="grid aspect-square w-full grid-cols-4 grid-rows-4 overflow-hidden rounded-sm"
+        className="relative grid aspect-square w-full grid-cols-4 grid-rows-4 overflow-hidden rounded-sm"
       >
         {squares.map((square) => {
           const file = fileOf(square);
@@ -156,9 +182,76 @@ export default function Board({
                   {FILES[file]}
                 </span>
               )}
+
+              {badge?.square === square && (
+                <span
+                  className="pointer-events-none absolute -right-1 -top-1 z-10 flex h-[34%] w-[34%] items-center justify-center rounded-full text-[9px] font-black text-white shadow-md sm:text-xs"
+                  style={{ backgroundColor: CLASSIFICATION_STYLE[badge.classification].color }}
+                  title={CLASSIFICATION_STYLE[badge.classification].label}
+                >
+                  {CLASSIFICATION_STYLE[badge.classification].glyph}
+                </span>
+              )}
             </button>
           );
         })}
+
+        {arrow && (
+          <svg
+            viewBox="0 0 4 4"
+            preserveAspectRatio="none"
+            className="pointer-events-none absolute inset-0 h-full w-full"
+            aria-hidden="true"
+          >
+            {arrow.from === null ? (
+              // A drop: mark the landing square instead of drawing a line.
+              <circle
+                cx={centre(arrow.to)[0]}
+                cy={centre(arrow.to)[1]}
+                r={0.34}
+                fill="none"
+                stroke={theme.target}
+                strokeWidth={0.11}
+                opacity={0.9}
+              />
+            ) : (
+              (() => {
+                const [x1, y1] = centre(arrow.from);
+                const [x2, y2] = centre(arrow.to);
+                const dx = x2 - x1;
+                const dy = y2 - y1;
+                const length = Math.hypot(dx, dy) || 1;
+                const ux = dx / length;
+                const uy = dy / length;
+                const head = 0.24;
+                const tipX = x2 - ux * 0.06;
+                const tipY = y2 - uy * 0.06;
+                const baseX = tipX - ux * head;
+                const baseY = tipY - uy * head;
+                return (
+                  <g stroke={theme.target} fill={theme.target} opacity={0.9}>
+                    <line
+                      x1={x1 + ux * 0.18}
+                      y1={y1 + uy * 0.18}
+                      x2={baseX}
+                      y2={baseY}
+                      strokeWidth={0.13}
+                      strokeLinecap="round"
+                    />
+                    <polygon
+                      points={[
+                        `${tipX},${tipY}`,
+                        `${baseX - uy * head * 0.6},${baseY + ux * head * 0.6}`,
+                        `${baseX + uy * head * 0.6},${baseY - ux * head * 0.6}`,
+                      ].join(" ")}
+                      stroke="none"
+                    />
+                  </g>
+                );
+              })()
+            )}
+          </svg>
+        )}
       </div>
     </div>
   );
