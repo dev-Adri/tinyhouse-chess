@@ -9,6 +9,7 @@ import {
 } from "@/app/lib/engine/classification";
 import type { GameReview } from "@/app/lib/engine/types";
 import type { BoardTheme } from "@/app/lib/tinyhouse/themes";
+import ClassificationBadge from "./ClassificationBadge";
 
 interface ReviewPanelProps {
   review: GameReview;
@@ -154,12 +155,10 @@ export default function ReviewPanel({
         {selected ? (
           <>
             <div className="flex items-center gap-2">
-              <span
-                className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-black text-white"
-                style={{ backgroundColor: CLASSIFICATION_STYLE[selected.classification].color }}
-              >
-                {CLASSIFICATION_STYLE[selected.classification].glyph}
-              </span>
+              <ClassificationBadge
+                classification={selected.classification}
+                className="h-5 w-5 xl:h-6 xl:w-6"
+              />
               <span className="font-bold">
                 {Math.floor(selected.ply / 2) + 1}
                 {selected.color === "w" ? "." : "..."} {selected.san}
@@ -211,13 +210,11 @@ export default function ReviewPanel({
                 {ply.color === "w" ? `${Math.floor(ply.ply / 2) + 1}.` : ""}
               </span>
               <span className="w-16 font-semibold">{ply.san}</span>
-              <span
-                className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] font-black text-white"
-                style={{ backgroundColor: style.color }}
+              <ClassificationBadge
+                classification={ply.classification}
+                className="h-4 w-4 xl:h-5 xl:w-5"
                 title={style.label}
-              >
-                {style.glyph}
-              </span>
+              />
               <span className="ml-auto tabular-nums opacity-70">
                 {formatScore(ply.eval_after, ply.mate_after)}
               </span>
