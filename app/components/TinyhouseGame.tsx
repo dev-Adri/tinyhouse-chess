@@ -58,6 +58,9 @@ const FALLBACK_LEVELS: EngineLevel[] = [
 
 const EMPTY_TARGETS: Set<number> = new Set();
 
+/** Search depth for the analysis board. Task 9 makes this a stored setting. */
+const analysisDepth = 8;
+
 const PIECE_LEGEND: { type: Piece["type"]; text: string }[] = [
   { type: "K", text: "one step in any direction" },
   { type: "P", text: "one step forward, captures diagonally, promotes on the far rank" },
@@ -121,7 +124,7 @@ export default function TinyhouseGame() {
   const hydrated = useRef(false);
 
   const analysisMode = mode === "analysis";
-  const analysis = useAnalysis(analysisMode);
+  const analysis = useAnalysis(analysisMode, { depth: analysisDepth, review });
 
   /**
    * The analysis tab opens on the position editor: pieces go anywhere, in any
