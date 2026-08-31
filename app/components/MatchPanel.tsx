@@ -85,6 +85,9 @@ export default function MatchPanel({
   const locked = started;
   const botControlsActive = mode === "bot" && !locked;
   const enginesMode = mode === "engines";
+  // The two level selects are fixed once the match starts — changing an
+  // engine's strength mid-game is a different thing. Pacing is not: watching
+  // is the whole point of the mode, so the delay slider stays live.
   const engineControlsActive = enginesMode && !locked;
   const levelName = levels.find((entry) => entry.level === level)?.name ?? `Level ${level}`;
   const analysing = mode === "analysis";
@@ -299,7 +302,6 @@ export default function MatchPanel({
                 max={10000}
                 step={100}
                 value={moveDelayMs}
-                disabled={!engineControlsActive}
                 onChange={(event) => onDelayChange(Number(event.target.value))}
                 aria-label="Seconds between engine moves"
                 className="w-full"
