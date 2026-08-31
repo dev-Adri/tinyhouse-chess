@@ -76,9 +76,12 @@ const nextConfig: NextConfig = {
 };
 ```
 
-Verified by a `next build` with no warning in the output. Note that `AGENTS.md`
-warns this Next version differs from training data — the exact config key is to
-be confirmed against `node_modules/next/dist/docs/` before writing it.
+Confirmed against
+`node_modules/next/dist/docs/01-app/03-api-reference/05-config/01-next-config-js/turbopack.md`
+for this Next version (16.3.3): `turbopack.root` sets the application root and
+must be an absolute path. Next detects the root by searching upwards for a
+lockfile, which is how it reached the home directory. Verified by a `next build`
+with no warning in its output.
 
 ## 4. Move grades on the analysis board
 
@@ -109,8 +112,8 @@ alternatives = legalMoves(parentPosition).length          // computed locally
 ```
 
 `alternatives` and the position itself come from the local rules engine, so no
-API change is needed. The three thresholds tables live in
-`engine/tinyhouse/analysis.py`; the client mirrors them.
+API change is needed. The thresholds live in `engine/tinyhouse/analysis.py`;
+the client mirrors them.
 
 ### Changes
 

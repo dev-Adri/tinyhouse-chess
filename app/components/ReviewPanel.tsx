@@ -16,6 +16,8 @@ interface ReviewPanelProps {
   /** 0 = starting position, i + 1 = the position after ply i. */
   position: number;
   onSelect: (position: number) => void;
+  /** Plays `uci` from the position after `ply` half-moves, branching there. */
+  onPlay: (ply: number, uci: string) => void;
   onClose: () => void;
 }
 
@@ -24,6 +26,7 @@ export default function ReviewPanel({
   theme,
   position,
   onSelect,
+  onPlay,
   onClose,
 }: ReviewPanelProps) {
   const { plies } = review;
@@ -47,6 +50,19 @@ export default function ReviewPanel({
   const upcoming = plies[position] ?? null;
 
   const move = (delta: number) => onSelect(Math.max(0, Math.min(plies.length, position + delta)));
+
+  /** A suggestion you can take up: playing it opens an alternate line. */
+  const suggestion = (ply: number, uci: string, san: string) => (
+    <button
+      type="button"
+      onClick={() => onPlay(ply, uci)}
+      title="Play this move instead — opens an alternate line"
+      className="rounded px-1 font-bold underline decoration-dotted underline-offset-2 transition hover:brightness-125"
+      style={{ backgroundColor: "rgba(255,255,255,0.12)" }}
+    >
+      {san}
+    </button>
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
@@ -157,7 +173,8 @@ export default function ReviewPanel({
             </div>
             {selected.classification !== "best" && selected.classification !== "forced" && (
               <div className="mt-1 opacity-80">
-                Best was <strong>{selected.best_san}</strong> ({formatScore(selected.eval_before, selected.mate_before)})
+                Best was {suggestion(position - 1, selected.best_uci, selected.best_san)} (
+                {formatScore(selected.eval_before, selected.mate_before)})
                 {selected.loss > 0 && <> — lost {(selected.loss / 100).toFixed(1)}</>}
               </div>
             )}
@@ -167,10 +184,15 @@ export default function ReviewPanel({
         )}
         {upcoming && (
           <div className="mt-1 opacity-80">
-            Engine plays <strong>{upcoming.best_san}</strong> here.
+            Engine plays {suggestion(position, upcoming.best_uci, upcoming.best_san)} here.
           </div>
         )}
       </div>
+
+      <p className="shrink-0 text-[10px] leading-tight opacity-50">
+        Play any move on the board — or a suggestion above — to branch into an
+        alternate line from here.
+      </p>
 
       {/* Move list */}
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">

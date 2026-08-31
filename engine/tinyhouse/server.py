@@ -5,6 +5,7 @@ app proxies to it through /api/engine/*.
 
     GET  /health              engine status and the difficulty levels
     POST /bestmove            {moves, level, fen?, seed?} -> the move to play
+    POST /analyse             {moves, fen?, depth?, timeMs?, multipv?} -> top lines
     POST /review              {moves, fen?, depth?, timeMs?} -> a game report
 """
 
@@ -17,7 +18,7 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .analysis import CLASSIFICATIONS, review_game
-from .position import Game, Position, move_from_uci
+from .position import BLACK, WHITE, Game, Position, move_from_uci
 from .search import LEVELS, LEVEL_NAMES, Limits, Searcher, choose_move
 
 MAX_BODY = 1 << 20  # 1 MB is far more than any legal request needs
@@ -34,6 +35,8 @@ def _build_game(payload: dict) -> Game:
     fen = payload.get("fen")
     try:
         game = Game(Position.from_fen(fen) if fen else None)
+        if fen:
+            _check_position(game.position)
         for text in moves:
             game.push(_legal_move(game, text))
     except EngineError:
@@ -41,6 +44,24 @@ def _build_game(payload: dict) -> Game:
     except Exception as exc:  # noqa: BLE001 - surfaced to the client verbatim
         raise EngineError(f"could not replay the game: {exc}") from exc
     return game
+
+
+def _check_position(position: Position) -> None:
+    """
+    Rejects a hand-built position the search cannot cope with.
+
+    Without this, a position where the waiting side is still in check lets the
+    search capture a king, which is not a move the rules ever produce — it dies
+    deep inside make() with an unhelpful 500.
+    """
+    for color in (WHITE, BLACK):
+        if position.king_square(color) < 0:
+            raise EngineError(f"illegal position: {'white' if color == WHITE else 'black'} has no king")
+
+    waiting = position.stm ^ 1
+    if position.in_check(waiting):
+        side = "white" if waiting == WHITE else "black"
+        raise EngineError(f"illegal position: {side} is in check but it is not their move")
 
 
 def _legal_move(game: Game, text: str) -> int:
@@ -110,6 +131,74 @@ def handle_bestmove(payload: dict) -> dict:
     }
 
 
+def handle_analyse(payload: dict) -> dict:
+    """
+    Evaluates a position for the analysis board.
+
+    Unlike /bestmove this never calls `choose_move`, which is what injects the
+    randomness and deliberate blunders the difficulty levels rely on. Analysis
+    has to be deterministic: the same position always returns the same lines.
+    """
+    game = _build_game(payload)
+    stm_is_white = game.position.stm == WHITE
+
+    def white(score: int) -> int:
+        return score if stm_is_white else -score
+
+    status, winner = game.outcome()
+    if status != "playing":
+        # A decided position is a normal thing to walk into while analysing, so
+        # it is reported rather than raised — a 400 here would read as a fault.
+        return {
+            "gameOver": status,
+            "winner": None if winner is None else ("w" if winner == WHITE else "b"),
+            "lines": [],
+            "score": 0,
+            "scoreWhite": 0,
+            "mateIn": None,
+            "depth": 0,
+            "nodes": 0,
+            "timeMs": 0,
+            "stm": "w" if stm_is_white else "b",
+        }
+
+    limits = Limits(
+        depth=max(1, min(int(payload.get("depth", 8)), 20)),
+        time_ms=max(20, min(int(payload.get("timeMs", 600)), 5_000)),
+        exact_root=True,
+        randomness=0,
+        blunder_chance=0.0,
+    )
+    multipv = max(1, min(int(payload.get("multipv", 3)), 5))
+
+    result = Searcher().search(game, limits)
+    if not result.root:
+        raise EngineError("no legal moves")
+
+    return {
+        "gameOver": None,
+        "winner": None,
+        "score": result.score,
+        "scoreWhite": white(result.score),
+        "mateIn": result.mate_in,
+        "depth": result.depth,
+        "nodes": result.nodes,
+        "timeMs": result.time_ms,
+        "stm": "w" if stm_is_white else "b",
+        "lines": [
+            {
+                "uci": entry.uci,
+                "san": entry.san,
+                "score": entry.score,
+                "scoreWhite": white(entry.score),
+                "mateIn": entry.mate_in,
+                "pv": entry.pv,
+            }
+            for entry in result.root[:multipv]
+        ],
+    }
+
+
 def handle_review(payload: dict) -> dict:
     moves = payload.get("moves") or []
     if not isinstance(moves, list) or len(moves) > 400:
@@ -130,6 +219,7 @@ def handle_review(payload: dict) -> dict:
 
 ROUTES = {
     "/bestmove": handle_bestmove,
+    "/analyse": handle_analyse,
     "/review": handle_review,
 }
 

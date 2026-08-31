@@ -8,7 +8,7 @@
 import { NextResponse } from "next/server";
 
 const ENGINE_URL = process.env.ENGINE_URL ?? "http://127.0.0.1:8000";
-const ALLOWED = new Set(["health", "bestmove", "review"]);
+const ALLOWED = new Set(["health", "bestmove", "analyse", "review"]);
 /** Long enough for a Master-level search or a full-game review. */
 const TIMEOUT_MS = 120_000;
 

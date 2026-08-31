@@ -5,7 +5,7 @@ import type { BoardTheme } from "@/app/lib/tinyhouse/themes";
 import type { EngineLevel } from "@/app/lib/engine/types";
 import ThemePicker from "./ThemePicker";
 
-export type OpponentMode = "human" | "bot";
+export type OpponentMode = "human" | "bot" | "analysis";
 
 interface MatchPanelProps {
   theme: BoardTheme;
@@ -19,6 +19,8 @@ interface MatchPanelProps {
   canReview: boolean;
   reviewing: boolean;
   inReview: boolean;
+  /** A played game exists that could be handed to the analysis board. */
+  canAnalyse: boolean;
   /** Phones keep the panel behind a toggle so the board keeps the room. */
   open: boolean;
   onToggle: () => void;
@@ -28,6 +30,7 @@ interface MatchPanelProps {
   onStart: () => void;
   onNewMatch: () => void;
   onReview: () => void;
+  onAnalyse: () => void;
   onThemeSelect: (id: string) => void;
 }
 
@@ -41,6 +44,7 @@ export default function MatchPanel({
   canReview,
   reviewing,
   inReview,
+  canAnalyse,
   open,
   onToggle,
   onModeChange,
@@ -49,6 +53,7 @@ export default function MatchPanel({
   onStart,
   onNewMatch,
   onReview,
+  onAnalyse,
   onThemeSelect,
 }: MatchPanelProps) {
   // Settings are locked once a match starts, so the board never shifts under
@@ -56,6 +61,7 @@ export default function MatchPanel({
   const locked = started;
   const botControlsActive = mode === "bot" && !locked;
   const levelName = levels.find((entry) => entry.level === level)?.name ?? `Level ${level}`;
+  const analysing = mode === "analysis";
 
   const chip = (active: boolean) => ({
     backgroundColor: active ? theme.accent : "rgba(255,255,255,0.08)",
@@ -69,7 +75,7 @@ export default function MatchPanel({
       className={`rounded-lg text-xs font-black uppercase tracking-wide transition hover:brightness-110 ${className}`}
       style={{ backgroundColor: theme.accent, color: theme.backdrop }}
     >
-      {started ? "New match" : "Start match"}
+      {started ? "New match" : analysing ? "Open analysis" : "Start match"}
     </button>
   );
 
@@ -85,12 +91,26 @@ export default function MatchPanel({
     </button>
   );
 
+
+  const analyseButton = (className: string) => (
+    <button
+      type="button"
+      onClick={onAnalyse}
+      disabled={!canAnalyse}
+      title="Open this game on the analysis board"
+      className={`rounded-lg text-xs font-bold uppercase tracking-wide transition hover:brightness-110 disabled:opacity-40 ${className}`}
+      style={{ backgroundColor: "rgba(255,255,255,0.1)", color: theme.surfaceText }}
+    >
+      Analyse from here
+    </button>
+  );
+
   return (
     <>
       {/* Phone bar: the two actions that matter, plus a way in to the rest. */}
       <div className="flex shrink-0 items-center gap-2 md:hidden">
         {startButton("h-9 flex-1 px-3")}
-        {!inReview && reviewButton("h-9 px-3")}
+        {!inReview && !analysing && reviewButton("h-9 px-3")}
         <button
           type="button"
           onClick={onToggle}
@@ -107,7 +127,7 @@ export default function MatchPanel({
               borderColor: theme.surfaceText,
             }}
           />
-          {mode === "bot" ? levelName : "2 players"}
+          {mode === "bot" ? levelName : analysing ? "Analysis" : "2 players"}
         </button>
       </div>
 
@@ -131,17 +151,17 @@ export default function MatchPanel({
         <h2 className="text-xs font-black uppercase tracking-wide opacity-60">Match</h2>
 
         <div className="flex w-full overflow-hidden rounded-lg" role="group" aria-label="Opponent">
-          {(["human", "bot"] as const).map((option) => (
+          {(["human", "bot", "analysis"] as const).map((option) => (
             <button
               key={option}
               type="button"
               aria-pressed={mode === option}
               disabled={locked}
               onClick={() => onModeChange(option)}
-              className="h-8 flex-1 px-3 text-xs font-bold uppercase tracking-wide transition disabled:cursor-default"
+              className="h-8 flex-1 px-1.5 text-[11px] font-bold uppercase tracking-wide transition disabled:cursor-default"
               style={{ ...chip(mode === option), opacity: locked && mode !== option ? 0.35 : 1 }}
             >
-              {option === "human" ? "2 players" : "Bot"}
+              {option === "human" ? "2 players" : option === "bot" ? "Bot" : "Analysis"}
             </button>
           ))}
         </div>
@@ -199,7 +219,8 @@ export default function MatchPanel({
 
         <div className="hidden flex-col gap-2 md:flex">
           {startButton("h-9 w-full px-4")}
-          {!inReview && reviewButton("h-8 w-full px-3")}
+          {!inReview && !analysing && reviewButton("h-8 w-full px-3")}
+          {!analysing && analyseButton("h-8 w-full px-3")}
         </div>
 
         <div
