@@ -29,7 +29,7 @@ import {
   saveDepths,
   saveGame,
 } from "@/app/lib/tinyhouse/storage";
-import { createTree, mainLine, treeFromHistory } from "@/app/lib/tinyhouse/variations";
+import { createTree, mainLine, positionAt, treeFromHistory } from "@/app/lib/tinyhouse/variations";
 import { fetchBestMove, fetchReview } from "@/app/lib/engine/client";
 import { toWhiteRelative } from "@/app/lib/engine/classification";
 import type { EngineLevel, GameReview } from "@/app/lib/engine/types";
@@ -643,6 +643,23 @@ export default function TinyhouseGame() {
   );
 
   /**
+   * Branches on the analysis board's "Best was …": that move belongs to the
+   * *parent* of the cursor — it is what should have been played instead of the
+   * move that reached this position — so it is resolved and played there.
+   */
+  const playAnalysisBest = useCallback(
+    (uci: string) => {
+      const parentId = analysis.tree.nodes[analysis.cursor]?.parent;
+      if (!parentId) return;
+      const wanted = moveFromUci(uci);
+      const from = positionAt(analysis.tree, parentId);
+      const move = legalMoves(from).find((candidate) => movesEqual(candidate, wanted));
+      if (move) analysis.playAt(parentId, move);
+    },
+    [analysis],
+  );
+
+  /**
    * Back to the game review from the analysis board. The cursor's place on the
    * main line is the ply the review should open at, so the board does not jump.
    */
@@ -1044,6 +1061,7 @@ export default function TinyhouseGame() {
               onPromote={analysis.promote}
               onDelete={analysis.deleteNode}
               onPlayLine={playAnalysisLine}
+              onPlayBest={playAnalysisBest}
               onStart={analysis.toStart}
               onBack={analysis.back}
               onForward={analysis.forward}

@@ -25,6 +25,12 @@ interface AnalysisPanelProps {
   onDelete: (nodeId: string) => void;
   /** Plays one of the engine's candidate moves, given as UCI. */
   onPlayLine: (uci: string) => void;
+  /**
+   * Plays the move the engine would have preferred instead of the one that
+   * reached this position — it belongs to the *parent* position, so it needs
+   * its own handler rather than `onPlayLine`.
+   */
+  onPlayBest: (uci: string) => void;
   onStart: () => void;
   onBack: () => void;
   onForward: () => void;
@@ -53,6 +59,7 @@ export default function AnalysisPanel({
   onPromote,
   onDelete,
   onPlayLine,
+  onPlayBest,
   onStart,
   onBack,
   onForward,
@@ -150,7 +157,7 @@ export default function AnalysisPanel({
               Best was{" "}
               <button
                 type="button"
-                onClick={() => onPlayLine(verdict!.bestUci)}
+                onClick={() => onPlayBest(verdict!.bestUci)}
                 title="Play this move instead — opens an alternate line"
                 className="rounded px-1 font-bold underline decoration-dotted underline-offset-2 transition hover:brightness-125"
                 style={{ backgroundColor: "rgba(255,255,255,0.12)" }}

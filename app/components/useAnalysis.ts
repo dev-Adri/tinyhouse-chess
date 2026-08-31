@@ -101,6 +101,21 @@ export function useAnalysis(
     [tree, cursor],
   );
 
+  /**
+   * Plays a move at an explicit node rather than at the cursor. Needed by
+   * "Best was …", where the move belongs to the cursor's *parent* position —
+   * resolving it at the cursor would either be a no-op or, for a drop, land
+   * the wrong colour's piece.
+   */
+  const playAt = useCallback(
+    (nodeId: string, move: Move) => {
+      const result = addMove(tree, nodeId, move);
+      setTree(result.tree);
+      setCursor(result.nodeId);
+    },
+    [tree],
+  );
+
   const goTo = useCallback((nodeId: string) => setCursor(nodeId), []);
 
   const back = useCallback(() => {
@@ -269,6 +284,7 @@ export function useAnalysis(
     analysing: live && !current && !currentError,
     verdicts,
     play,
+    playAt,
     goTo,
     back,
     forward,
