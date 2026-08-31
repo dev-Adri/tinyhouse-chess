@@ -75,7 +75,9 @@ export default function ReviewPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
-      <div className="flex items-center justify-between">
+      {/* Wraps rather than clips: the panel is narrow and the aside hides
+          overflow, so the stepper must be free to drop to a second line. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
         <h2 className="text-sm font-black uppercase tracking-wide">Game review</h2>
         <DepthStepper
           value={depth}

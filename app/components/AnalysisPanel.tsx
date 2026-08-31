@@ -101,15 +101,10 @@ export default function AnalysisPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
         <h2 className="text-sm font-black uppercase tracking-wide">Analysis</h2>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           {analysing && !over && <span className="text-[10px] opacity-60">thinking…</span>}
-          <DepthStepper
-            value={depth}
-            onChange={onDepthChange}
-            title="Engine search depth for this board"
-          />
           {onBackToReview && (
             <button
               type="button"
@@ -175,44 +170,55 @@ export default function AnalysisPanel({
         className="shrink-0 rounded-lg px-2 py-1.5 text-xs sm:min-h-[5.5rem]"
         style={{ backgroundColor: "rgba(255,255,255,0.07)" }}
       >
-        {over ? (
-          <p className="font-bold">{overText}</p>
-        ) : analysisError ? (
-          <p className="opacity-80">Engine offline — moves still work.</p>
-        ) : !analysis ? (
-          <p className="opacity-60">Evaluating…</p>
-        ) : (
-          <>
-            <div className="flex items-baseline gap-2">
-              <span className="text-lg font-black tabular-nums">
-                {formatScore(headline!.score, headline!.mateIn)}
-              </span>
-              <span className="text-[10px] opacity-60">
-                depth {analysis.depth} · {(analysis.nodes / 1000).toFixed(0)}k nodes
-              </span>
-            </div>
-            <div className="mt-1 flex flex-col gap-0.5">
-              {analysis.lines.map((line, index) => {
-                const view = toWhiteRelative(analysis.stm, line.score, line.mateIn);
-                return (
-                  <button
-                    key={line.uci}
-                    type="button"
-                    onClick={() => onPlayLine(line.uci)}
-                    title={line.pv.join(" ")}
-                    className="flex items-baseline gap-2 rounded px-1 py-0.5 text-left text-[11px] transition hover:brightness-125"
-                    style={{ backgroundColor: index === 0 ? "rgba(255,255,255,0.1)" : "transparent" }}
-                  >
-                    <span className="w-3 shrink-0 opacity-50 tabular-nums">{index + 1}</span>
-                    <span className="w-14 shrink-0 font-semibold">{line.san}</span>
-                    <span className="tabular-nums opacity-70">
-                      {formatScore(view.score, view.mateIn)}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </>
+        {/* The stepper lives beside the depth line rather than in the header:
+            the header row overflowed the narrow panel, which clips. */}
+        <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
+          <div className="flex flex-wrap items-baseline gap-x-2">
+            {over ? (
+              <p className="font-bold">{overText}</p>
+            ) : analysisError ? (
+              <p className="opacity-80">Engine offline — moves still work.</p>
+            ) : !analysis ? (
+              <p className="opacity-60">Evaluating…</p>
+            ) : (
+              <>
+                <span className="text-lg font-black tabular-nums">
+                  {formatScore(headline!.score, headline!.mateIn)}
+                </span>
+                <span className="text-[10px] opacity-60">
+                  depth {analysis.depth} · {(analysis.nodes / 1000).toFixed(0)}k nodes
+                </span>
+              </>
+            )}
+          </div>
+          <DepthStepper
+            value={depth}
+            onChange={onDepthChange}
+            title="Engine search depth for this board"
+          />
+        </div>
+        {!over && !analysisError && analysis && (
+          <div className="mt-1 flex flex-col gap-0.5">
+            {analysis.lines.map((line, index) => {
+              const view = toWhiteRelative(analysis.stm, line.score, line.mateIn);
+              return (
+                <button
+                  key={line.uci}
+                  type="button"
+                  onClick={() => onPlayLine(line.uci)}
+                  title={line.pv.join(" ")}
+                  className="flex items-baseline gap-2 rounded px-1 py-0.5 text-left text-[11px] transition hover:brightness-125"
+                  style={{ backgroundColor: index === 0 ? "rgba(255,255,255,0.1)" : "transparent" }}
+                >
+                  <span className="w-3 shrink-0 opacity-50 tabular-nums">{index + 1}</span>
+                  <span className="w-14 shrink-0 font-semibold">{line.san}</span>
+                  <span className="tabular-nums opacity-70">
+                    {formatScore(view.score, view.mateIn)}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         )}
       </div>
 
