@@ -42,6 +42,12 @@ export default function ThemePicker({ theme, onSelect }: ThemePickerProps) {
 
   useEffect(() => {
     if (!open) return;
+    // Focus moves into the list on open: it starts on the trigger, which is
+    // not a descendant, so the arrow handler below would never see a key.
+    const selected = list.current?.querySelector<HTMLElement>(
+      '[role="option"][aria-selected="true"]',
+    );
+    (selected ?? list.current)?.focus();
     const onPointerDown = (event: PointerEvent) => {
       if (!container.current?.contains(event.target as Node)) setOpen(false);
     };
@@ -107,6 +113,7 @@ export default function ThemePicker({ theme, onSelect }: ThemePickerProps) {
           ref={list}
           role="listbox"
           aria-label="Board theme"
+          tabIndex={-1}
           onKeyDown={onListKeyDown}
           className="absolute bottom-full left-0 z-50 mb-1 max-h-64 w-full min-w-40 overflow-y-auto rounded-lg py-1 shadow-2xl"
           style={{ backgroundColor: theme.surface, color: theme.surfaceText }}
