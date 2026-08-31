@@ -34,6 +34,13 @@ interface MatchPanelProps {
   onThemeSelect: (id: string) => void;
 }
 
+/** Kept beside the type so a new mode cannot be added without a label. */
+const MODE_OPTIONS: { mode: OpponentMode; label: string }[] = [
+  { mode: "human", label: "2 players" },
+  { mode: "bot", label: "vs Bot" },
+  { mode: "analysis", label: "Analysis" },
+];
+
 export default function MatchPanel({
   theme,
   mode,
@@ -150,18 +157,21 @@ export default function MatchPanel({
       >
         <h2 className="text-xs font-black uppercase tracking-wide opacity-60">Match</h2>
 
-        <div className="flex w-full overflow-hidden rounded-lg" role="group" aria-label="Opponent">
-          {(["human", "bot", "analysis"] as const).map((option) => (
+        <div className="grid grid-cols-2 gap-1" role="group" aria-label="Opponent">
+          {MODE_OPTIONS.map((option) => (
             <button
-              key={option}
+              key={option.mode}
               type="button"
-              aria-pressed={mode === option}
+              aria-pressed={mode === option.mode}
               disabled={locked}
-              onClick={() => onModeChange(option)}
-              className="h-8 flex-1 px-1.5 text-[11px] font-bold uppercase tracking-wide transition disabled:cursor-default"
-              style={{ ...chip(mode === option), opacity: locked && mode !== option ? 0.35 : 1 }}
+              onClick={() => onModeChange(option.mode)}
+              className="h-9 rounded-lg px-1.5 text-[11px] font-bold uppercase tracking-wide transition disabled:cursor-default"
+              style={{
+                ...chip(mode === option.mode),
+                opacity: locked && mode !== option.mode ? 0.35 : 1,
+              }}
             >
-              {option === "human" ? "2 players" : option === "bot" ? "Bot" : "Analysis"}
+              {option.label}
             </button>
           ))}
         </div>
