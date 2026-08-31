@@ -107,6 +107,15 @@ class TestAnalyse(unittest.TestCase):
         self.assertLessEqual(result["depth"], 20)
         self.assertTrue(result["lines"])
 
+    def test_depth_is_honoured_and_clamped(self):
+        shallow = handle_analyse({"moves": [], "depth": 2, "timeMs": 2000})
+        deeper = handle_analyse({"moves": [], "depth": 6, "timeMs": 5000})
+
+        self.assertLessEqual(shallow["depth"], 2)
+        self.assertGreater(deeper["depth"], shallow["depth"])
+        # Absurd values clamp rather than raising.
+        self.assertLessEqual(handle_analyse({"moves": [], "depth": 999, "timeMs": 200})["depth"], 20)
+
 
 if __name__ == "__main__":
     unittest.main()

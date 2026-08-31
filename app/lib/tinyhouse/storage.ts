@@ -14,7 +14,13 @@ import { deserialize, serialize, type MoveTree } from "./variations";
 export const THEME_STORAGE_KEY = "tinyhouse:theme";
 const GAME_KEY = "tinyhouse:game";
 const ANALYSIS_KEY = "tinyhouse:analysis";
+const DEPTHS_KEY = "tinyhouse:depths";
 const VERSION = 1;
+
+/** The UI's search-depth range. The engine itself clamps to 1..20. */
+export const MIN_DEPTH = 4;
+export const MAX_DEPTH = 12;
+export const DEFAULT_DEPTH = 8;
 
 /** Mirrors OpponentMode, kept local so this module stays under the components. */
 const MODES = ["human", "bot", "analysis"] as const;
@@ -31,6 +37,11 @@ export interface StoredGame {
 export interface StoredAnalysis {
   tree: MoveTree;
   cursor: string;
+}
+
+export interface StoredDepths {
+  analysis: number;
+  review: number;
 }
 
 function read(key: string): string | null {
@@ -141,4 +152,24 @@ export function loadAnalysis(): StoredAnalysis | null {
     ? payload.cursor
     : tree.root;
   return { tree, cursor };
+}
+
+export function clampDepth(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_DEPTH;
+  return Math.max(MIN_DEPTH, Math.min(MAX_DEPTH, Math.round(value)));
+}
+
+export function loadDepths(): StoredDepths {
+  const text = read(DEPTHS_KEY);
+  if (!text) return { analysis: DEFAULT_DEPTH, review: DEFAULT_DEPTH };
+  try {
+    const payload = JSON.parse(text) as { analysis?: unknown; review?: unknown };
+    return { analysis: clampDepth(payload?.analysis), review: clampDepth(payload?.review) };
+  } catch {
+    return { analysis: DEFAULT_DEPTH, review: DEFAULT_DEPTH };
+  }
+}
+
+export function saveDepths(depths: StoredDepths): void {
+  write(DEPTHS_KEY, JSON.stringify({ analysis: depths.analysis, review: depths.review }));
 }

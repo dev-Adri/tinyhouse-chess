@@ -18,11 +18,15 @@ import {
 import { moveFromUci, moveToUci } from "@/app/lib/tinyhouse/uci";
 import { DEFAULT_THEME_ID, getTheme } from "@/app/lib/tinyhouse/themes";
 import {
+  DEFAULT_DEPTH,
   THEME_STORAGE_KEY,
+  clampDepth,
   clearStored,
   loadAnalysis,
+  loadDepths,
   loadGame,
   saveAnalysis,
+  saveDepths,
   saveGame,
 } from "@/app/lib/tinyhouse/storage";
 import { createTree, mainLine, treeFromHistory } from "@/app/lib/tinyhouse/variations";
@@ -57,9 +61,6 @@ const FALLBACK_LEVELS: EngineLevel[] = [
 ];
 
 const EMPTY_TARGETS: Set<number> = new Set();
-
-/** Search depth for the analysis board. Task 9 makes this a stored setting. */
-const analysisDepth = 8;
 
 const PIECE_LEGEND: { type: Piece["type"]; text: string }[] = [
   { type: "K", text: "one step in any direction" },
@@ -102,6 +103,9 @@ export default function TinyhouseGame() {
   const [flipBoard, setFlipBoard] = useState(false);
   /** Sound is on by default; the choice is remembered across sessions. */
   const [muted, setMuted] = useState(false);
+  /** Search depth, kept separately per surface: deep review, fast analysis. */
+  const [analysisDepth, setAnalysisDepth] = useState(DEFAULT_DEPTH);
+  const [reviewDepth, setReviewDepth] = useState(DEFAULT_DEPTH);
 
   // Review
   const [review, setReview] = useState<GameReview | null>(null);
@@ -295,6 +299,9 @@ export default function TinyhouseGame() {
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     setMuted(readMuted());
+    const depths = loadDepths();
+    setAnalysisDepth(depths.analysis);
+    setReviewDepth(depths.review);
     const storedAnalysis = loadAnalysis();
     // A hand-built start position is worth restoring even before a move is
     // played on it — otherwise arranging a board and refreshing loses it.
@@ -334,6 +341,11 @@ export default function TinyhouseGame() {
     return () => clearTimeout(timer);
   }, [analysis.tree, analysis.cursor]);
 
+  useEffect(() => {
+    if (!hydrated.current) return;
+    saveDepths({ analysis: analysisDepth, review: reviewDepth });
+  }, [analysisDepth, reviewDepth]);
+
   // --- engine: the bot's move ------------------------------------------------
 
   useEffect(() => {
@@ -361,21 +373,34 @@ export default function TinyhouseGame() {
 
   // --- engine: the game review ----------------------------------------------
 
-  const startReview = useCallback(async () => {
-    if (!uciMoves.length || reviewing) return;
-    setReviewing(true);
-    setEngineError(null);
-    try {
-      const report = await fetchReview(uciMoves);
-      setReview(report);
-      setViewPly(report.plies.length);
-      interaction.clear();
-    } catch (error) {
-      setEngineError((error as Error).message);
-    } finally {
-      setReviewing(false);
-    }
-  }, [uciMoves, reviewing, interaction, setViewPly]);
+  const startReview = useCallback(
+    async (depth: number = reviewDepth) => {
+      if (!uciMoves.length || reviewing) return;
+      setReviewing(true);
+      setEngineError(null);
+      try {
+        const report = await fetchReview(uciMoves, { depth });
+        setReview(report);
+        setViewPly(report.plies.length);
+        interaction.clear();
+      } catch (error) {
+        setEngineError((error as Error).message);
+      } finally {
+        setReviewing(false);
+      }
+    },
+    [uciMoves, reviewing, interaction, setViewPly, reviewDepth],
+  );
+
+  /** Changing the review depth re-runs it: the grades are depth-dependent. */
+  const changeReviewDepth = useCallback(
+    (depth: number) => {
+      const next = clampDepth(depth);
+      setReviewDepth(next);
+      if (review) void startReview(next);
+    },
+    [review, startReview],
+  );
 
   const closeReview = useCallback(() => {
     setReview(null);
@@ -843,7 +868,7 @@ export default function TinyhouseGame() {
                       {canReview && (
                         <button
                           type="button"
-                          onClick={startReview}
+                          onClick={() => startReview()}
                           disabled={reviewing}
                           className="rounded-full px-4 py-1.5 text-xs font-bold uppercase tracking-wide disabled:opacity-50"
                           style={{ backgroundColor: theme.surfaceText, color: theme.surface }}
@@ -956,6 +981,8 @@ export default function TinyhouseGame() {
               onEditPosition={editPosition}
               verdicts={analysis.verdicts}
               onBackToReview={review ? backToReview : undefined}
+              depth={analysisDepth}
+              onDepthChange={(next) => setAnalysisDepth(clampDepth(next))}
             />
           ) : review ? (
             <ReviewPanel
@@ -965,6 +992,9 @@ export default function TinyhouseGame() {
               onSelect={setViewPly}
               onPlay={playSuggestion}
               onClose={closeReview}
+              depth={reviewDepth}
+              onDepthChange={changeReviewDepth}
+              reviewing={reviewing}
             />
           ) : (
             <>

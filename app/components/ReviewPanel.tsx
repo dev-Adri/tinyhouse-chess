@@ -10,6 +10,7 @@ import {
 import type { GameReview } from "@/app/lib/engine/types";
 import type { BoardTheme } from "@/app/lib/tinyhouse/themes";
 import ClassificationBadge from "./ClassificationBadge";
+import DepthStepper from "./DepthStepper";
 
 interface ReviewPanelProps {
   review: GameReview;
@@ -20,6 +21,10 @@ interface ReviewPanelProps {
   /** Plays `uci` from the position after `ply` half-moves, branching there. */
   onPlay: (ply: number, uci: string) => void;
   onClose: () => void;
+  depth: number;
+  /** Changing the depth re-runs the whole review, so this is a commit. */
+  onDepthChange: (depth: number) => void;
+  reviewing: boolean;
 }
 
 export default function ReviewPanel({
@@ -29,6 +34,9 @@ export default function ReviewPanel({
   onSelect,
   onPlay,
   onClose,
+  depth,
+  onDepthChange,
+  reviewing,
 }: ReviewPanelProps) {
   const { plies } = review;
 
@@ -69,6 +77,12 @@ export default function ReviewPanel({
     <div className="flex h-full min-h-0 flex-col gap-2">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-black uppercase tracking-wide">Game review</h2>
+        <DepthStepper
+          value={depth}
+          onChange={onDepthChange}
+          disabled={reviewing}
+          title="Re-runs the review at this depth"
+        />
         <button
           type="button"
           onClick={onClose}

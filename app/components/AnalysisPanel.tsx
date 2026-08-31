@@ -8,6 +8,7 @@ import type { BoardTheme } from "@/app/lib/tinyhouse/themes";
 import { pathTo, type MoveTree } from "@/app/lib/tinyhouse/variations";
 import BoardNav from "./BoardNav";
 import ClassificationBadge from "./ClassificationBadge";
+import DepthStepper from "./DepthStepper";
 import MoveTreeList from "./MoveTreeList";
 
 interface AnalysisPanelProps {
@@ -36,6 +37,8 @@ interface AnalysisPanelProps {
   verdicts: Record<string, MoveVerdict>;
   /** Present when a game review is being held, so it can be returned to. */
   onBackToReview?: () => void;
+  depth: number;
+  onDepthChange: (depth: number) => void;
 }
 
 export default function AnalysisPanel({
@@ -59,6 +62,8 @@ export default function AnalysisPanel({
   onEditPosition,
   verdicts,
   onBackToReview,
+  depth,
+  onDepthChange,
 }: AnalysisPanelProps) {
   const over = outcome.over;
   const overText = over
@@ -74,12 +79,12 @@ export default function AnalysisPanel({
   const headline = analysis ? toWhiteRelative(analysis.stm, analysis.score, analysis.mateIn) : null;
 
   // The move that reached this position, and where it sits in the game.
-  const depth = pathTo(tree, cursor).length - 1;
+  const ply = pathTo(tree, cursor).length - 1;
   const verdict = verdicts[cursor] ?? null;
   const node = tree.nodes[cursor];
   const label =
-    depth > 0 && node?.san
-      ? `${Math.floor((depth - 1) / 2) + 1}${(depth - 1) % 2 === 0 ? "." : "…"} ${node.san}`
+    ply > 0 && node?.san
+      ? `${Math.floor((ply - 1) / 2) + 1}${(ply - 1) % 2 === 0 ? "." : "…"} ${node.san}`
       : null;
   const showBest =
     verdict !== null &&
@@ -93,6 +98,11 @@ export default function AnalysisPanel({
         <h2 className="text-sm font-black uppercase tracking-wide">Analysis</h2>
         <div className="flex items-center gap-2">
           {analysing && !over && <span className="text-[10px] opacity-60">thinking…</span>}
+          <DepthStepper
+            value={depth}
+            onChange={onDepthChange}
+            title="Engine search depth for this board"
+          />
           {onBackToReview && (
             <button
               type="button"
