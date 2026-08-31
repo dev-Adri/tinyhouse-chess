@@ -1,11 +1,13 @@
 "use client";
 
-import { formatScore, toWhiteRelative } from "@/app/lib/engine/classification";
+import { CLASSIFICATION_STYLE, formatScore, toWhiteRelative } from "@/app/lib/engine/classification";
 import type { AnalysisResult } from "@/app/lib/engine/types";
+import type { MoveVerdict } from "@/app/lib/engine/verdict";
 import type { GameOutcome } from "@/app/lib/tinyhouse/engine";
 import type { BoardTheme } from "@/app/lib/tinyhouse/themes";
-import type { MoveTree } from "@/app/lib/tinyhouse/variations";
+import { pathTo, type MoveTree } from "@/app/lib/tinyhouse/variations";
 import BoardNav from "./BoardNav";
+import ClassificationBadge from "./ClassificationBadge";
 import MoveTreeList from "./MoveTreeList";
 
 interface AnalysisPanelProps {
@@ -30,6 +32,10 @@ interface AnalysisPanelProps {
   canForward: boolean;
   /** Back to the position editor, seeded with the position on the board. */
   onEditPosition: () => void;
+  /** Grades per node: from the review where there is one, else from the engine. */
+  verdicts: Record<string, MoveVerdict>;
+  /** Present when a game review is being held, so it can be returned to. */
+  onBackToReview?: () => void;
 }
 
 export default function AnalysisPanel({
@@ -51,6 +57,8 @@ export default function AnalysisPanel({
   canBack,
   canForward,
   onEditPosition,
+  verdicts,
+  onBackToReview,
 }: AnalysisPanelProps) {
   const over = outcome.over;
   const overText = over
@@ -65,12 +73,36 @@ export default function AnalysisPanel({
 
   const headline = analysis ? toWhiteRelative(analysis.stm, analysis.score, analysis.mateIn) : null;
 
+  // The move that reached this position, and where it sits in the game.
+  const depth = pathTo(tree, cursor).length - 1;
+  const verdict = verdicts[cursor] ?? null;
+  const node = tree.nodes[cursor];
+  const label =
+    depth > 0 && node?.san
+      ? `${Math.floor((depth - 1) / 2) + 1}${(depth - 1) % 2 === 0 ? "." : "…"} ${node.san}`
+      : null;
+  const showBest =
+    verdict !== null &&
+    verdict.classification !== "best" &&
+    verdict.classification !== "great" &&
+    verdict.classification !== "forced";
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-black uppercase tracking-wide">Analysis</h2>
         <div className="flex items-center gap-2">
           {analysing && !over && <span className="text-[10px] opacity-60">thinking…</span>}
+          {onBackToReview && (
+            <button
+              type="button"
+              onClick={onBackToReview}
+              className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide opacity-70 hover:opacity-100"
+              style={{ backgroundColor: "rgba(255,255,255,0.1)" }}
+            >
+              Back to review
+            </button>
+          )}
           <button
             type="button"
             onClick={onEditPosition}
@@ -81,6 +113,45 @@ export default function AnalysisPanel({
           </button>
         </div>
       </div>
+
+      {/* How the move that reached this position rated — the same verdict the
+          game review gives, so branching off no longer loses it. */}
+      {label && (
+        <div
+          className="shrink-0 rounded-lg px-2 py-1.5 text-xs sm:min-h-[3.25rem]"
+          style={{ backgroundColor: "rgba(255,255,255,0.07)" }}
+        >
+          <div className="flex items-center gap-2">
+            {verdict ? (
+              <ClassificationBadge
+                classification={verdict.classification}
+                className="h-5 w-5 xl:h-6 xl:w-6"
+              />
+            ) : (
+              <span className="h-5 w-5 rounded-full xl:h-6 xl:w-6" style={{ backgroundColor: "rgba(255,255,255,0.12)" }} />
+            )}
+            <span className="font-bold">{label}</span>
+            <span className="opacity-70">
+              {verdict ? CLASSIFICATION_STYLE[verdict.classification].label : "grading…"}
+            </span>
+          </div>
+          {showBest && (
+            <div className="mt-1 opacity-80">
+              Best was{" "}
+              <button
+                type="button"
+                onClick={() => onPlayLine(verdict!.bestUci)}
+                title="Play this move instead — opens an alternate line"
+                className="rounded px-1 font-bold underline decoration-dotted underline-offset-2 transition hover:brightness-125"
+                style={{ backgroundColor: "rgba(255,255,255,0.12)" }}
+              >
+                {verdict!.bestSan}
+              </button>
+              {verdict!.loss > 0 && <> — lost {(verdict!.loss / 100).toFixed(1)}</>}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Engine verdict on the position now on the board. */}
       <div
@@ -147,6 +218,7 @@ export default function AnalysisPanel({
           onPromote={onPromote}
           onDelete={onDelete}
           emptyText="Play a move to start a line."
+          verdicts={verdicts}
         />
       </div>
 

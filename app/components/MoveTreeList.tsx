@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import type { MoveVerdict } from "@/app/lib/engine/verdict";
 import type { BoardTheme } from "@/app/lib/tinyhouse/themes";
 import { outline, type LineItem, type MoveTree } from "@/app/lib/tinyhouse/variations";
+import ClassificationBadge from "./ClassificationBadge";
 
 interface MoveTreeListProps {
   tree: MoveTree;
@@ -14,6 +16,8 @@ interface MoveTreeListProps {
   onPromote?: (nodeId: string) => void;
   onDelete?: (nodeId: string) => void;
   emptyText?: string;
+  /** Grades per node, when they are known. Absent in a live game. */
+  verdicts?: Record<string, MoveVerdict>;
 }
 
 /** Where a right-click landed, so the menu can open next to the pointer. */
@@ -51,6 +55,7 @@ export default function MoveTreeList({
   onPromote,
   onDelete,
   emptyText = "No moves yet.",
+  verdicts = {},
 }: MoveTreeListProps) {
   const [menu, setMenu] = useState<Menu | null>(null);
   const editable = Boolean(onPromote || onDelete);
@@ -103,6 +108,12 @@ export default function MoveTreeList({
         </span>
         {white || variation ? " " : ""}
         {node.san}
+        {verdicts[nodeId] && (
+          <ClassificationBadge
+            classification={verdicts[nodeId].classification}
+            className="ml-0.5 inline-block h-3 w-3 align-middle xl:h-4 xl:w-4"
+          />
+        )}
       </button>
     );
   };

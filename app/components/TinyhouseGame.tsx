@@ -106,6 +106,8 @@ export default function TinyhouseGame() {
   // Review
   const [review, setReview] = useState<GameReview | null>(null);
   const [reviewing, setReviewing] = useState(false);
+  /** Where "Back to review" returns to; null when analysis was entered directly. */
+  const [returnMode, setReturnMode] = useState<OpponentMode | null>(null);
 
   /**
    * How far into the live game the board is showing: 0 is the starting
@@ -220,12 +222,14 @@ export default function TinyhouseGame() {
       analysis.load(tree, cursor, firstMove);
       // The report is kept rather than cleared: `inReview` already yields to
       // analysis mode, and holding it means going back costs nothing later.
+      // Entering analysis from analysis must not forget the original mode.
+      setReturnMode((current) => (mode === "analysis" ? current : mode));
       setEditing(false);
       setMode("analysis");
       setStarted(true);
       setSettingsOpen(false);
     },
-    [game.history, analysis],
+    [game.history, analysis, mode],
   );
 
   const handleMove = useCallback(
@@ -549,6 +553,19 @@ export default function TinyhouseGame() {
     },
     [analysis],
   );
+
+  /**
+   * Back to the game review from the analysis board. The cursor's place on the
+   * main line is the ply the review should open at, so the board does not jump.
+   */
+  const backToReview = useCallback(() => {
+    if (!review) return;
+    const line = mainLine(analysis.tree);
+    const index = line.indexOf(analysis.cursor);
+    if (index >= 0) setViewPly(Math.min(index, review.plies.length));
+    setMode(returnMode ?? "human");
+    setEditing(false);
+  }, [review, analysis.tree, analysis.cursor, returnMode, setViewPly]);
 
   /** Leaves the editor and hands the arranged position to the analysis tree. */
   const analyseSetup = useCallback(() => {
@@ -937,6 +954,8 @@ export default function TinyhouseGame() {
               canBack={Boolean(cursorNode?.parent)}
               canForward={Boolean(cursorNode?.children.length)}
               onEditPosition={editPosition}
+              verdicts={analysis.verdicts}
+              onBackToReview={review ? backToReview : undefined}
             />
           ) : review ? (
             <ReviewPanel
