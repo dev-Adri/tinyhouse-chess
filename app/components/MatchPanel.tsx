@@ -123,7 +123,6 @@ export default function MatchPanel({
     </button>
   );
 
-
   const analyseButton = (className: string) => (
     <button
       type="button"

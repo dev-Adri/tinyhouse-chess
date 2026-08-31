@@ -8,6 +8,10 @@
 # Env overrides: PORT, ENGINE_PORT, ENGINE_HOST
 
 set -euo pipefail
+# Job control, so each background job becomes its own process group and can be
+# killed as a whole: `npm run dev` is only a wrapper around `next dev`, and
+# signalling the wrapper alone orphans the server and leaves the port held.
+set -m
 cd "$(dirname "$0")"
 
 PROD=0
@@ -44,7 +48,11 @@ APP_PORT="${PORT:-$(find_free_port 3000)}"
 cleanup() {
   echo
   echo "Shutting down..."
-  kill "${APP_PID:-}" "${ENGINE_PID:-}" 2>/dev/null
+  # Whole process groups: the app pid is npm, whose `next` child holds the port.
+  for pid in "${APP_PID:-}" "${ENGINE_PID:-}"; do
+    [[ -n "$pid" ]] || continue
+    kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+  done
   wait 2>/dev/null
 }
 trap cleanup EXIT INT TERM
