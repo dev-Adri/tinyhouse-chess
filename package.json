@@ -3,9 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "start": "node scripts/dev.mjs",
+    "start:prod": "node scripts/dev.mjs --build",
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "serve": "next start",
+    "web": "node scripts/dev.mjs --no-engine",
     "lint": "eslint"
   },
   "dependencies": {

@@ -6,21 +6,34 @@ your games.
 
 ## Running it
 
-Two processes: the Next.js app, and the engine that backs bot play and game
-review. The board itself works without the engine; only the bot and the review
-need it.
+One command starts both the app and the engine:
 
 ```bash
-npm run dev
+npm start
 ```
 
-```bash
-cd engine && python -m tinyhouse serve
+It picks free ports — 3000 and 8000 if they are available, otherwise the next
+ones up — tells the app where the engine landed, streams both logs with a
+prefix, and stops both on Ctrl+C.
+
+```
+[tinyhouse] engine ready
+[tinyhouse] app on http://localhost:3000
 ```
 
-Then open <http://localhost:3000>. The app proxies to the engine through
-`/api/engine/*`; set `ENGINE_URL` if it does not live on
-`http://127.0.0.1:8000`.
+| Command | What it does |
+| --- | --- |
+| `npm start` | app + engine, development mode |
+| `npm run start:prod` | same, but builds first and serves the production output |
+| `npm run web` | app only (no bot play or review) |
+| `npm run dev` | plain `next dev`, if you want to run the engine yourself |
+
+Options: `--web-port n`, `--engine-port n`, `--python <cmd>`, `--no-engine`,
+`--build`. The board is fully playable without the engine — only bot play and
+game review need it, and the app says so if it is missing.
+
+To run the two halves separately, start `cd engine && python -m tinyhouse serve`
+and point the app at it with `ENGINE_URL`; requests go through `/api/engine/*`.
 
 ## The game
 
@@ -51,6 +64,7 @@ this.
 | `app/components/` | board, reserves, promotion dialog, themes, review panel |
 | `app/api/engine/[...path]/route.ts` | proxy to the Python engine |
 | `engine/` | the Python engine, its API, and its tests — see [engine/README.md](engine/README.md) |
+| `scripts/dev.mjs` | the launcher that starts both halves on free ports |
 
 The two rule implementations are pinned to each other by perft: both count
 exactly 1,355,253 leaf nodes at depth 7 from the starting position.
