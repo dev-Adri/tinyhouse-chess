@@ -1,0 +1,343 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createGame, getOutcome, legalMoves, toFen, type Move } from "@/app/lib/tinyhouse/engine";
+import { moveToUci } from "@/app/lib/tinyhouse/uci";
+import {
+  addMove,
+  createTree,
+  mainLine,
+  pathTo,
+  positionAt,
+  promoteToMainLine,
+  remove,
+  type MoveTree,
+} from "@/app/lib/tinyhouse/variations";
+import { fetchAnalysis } from "@/app/lib/engine/client";
+import type { AnalysisResult, GameReview } from "@/app/lib/engine/types";
+import { seedVerdicts, verdictFrom, type MoveVerdict } from "@/app/lib/engine/verdict";
+
+/** Long enough that stepping through a line does not queue a search per position. */
+const DEBOUNCE_MS = 250;
+
+/**
+ * Evaluations, keyed by node id. Node ids are stable within a tree and a
+ * node's position never changes, so this cache cannot go stale — a new tree
+ * (or a new depth) simply gets a new one.
+ */
+type Evaluations = Record<string, AnalysisResult>;
+
+/** An error is tied to the node it happened on, so it clears by navigating. */
+interface EvalError {
+  cursor: string;
+  message: string;
+}
+
+const NO_VERDICTS: Record<string, MoveVerdict> = {};
+
+export interface AnalysisState {
+  tree: MoveTree;
+  cursor: string;
+}
+
+export function useAnalysis(
+  enabled: boolean,
+  options: { depth: number; review: GameReview | null; initial?: AnalysisState },
+) {
+  const { depth, review, initial } = options;
+  const [tree, setTree] = useState<MoveTree>(() => initial?.tree ?? createTree());
+  const [cursor, setCursor] = useState<string>(() => initial?.cursor ?? tree.root);
+  const [evals, setEvals] = useState<Evaluations>({});
+  const [error, setError] = useState<EvalError | null>(null);
+
+  const state = useMemo(() => positionAt(tree, cursor), [tree, cursor]);
+  const moves = useMemo(() => legalMoves(state), [state]);
+  const outcome = useMemo(() => getOutcome(state, moves), [state, moves]);
+  const path = useMemo(() => pathTo(tree, cursor), [tree, cursor]);
+  const uciPath = useMemo(
+    () => path.slice(1).map((id) => moveToUci(tree.nodes[id].move!)),
+    [path, tree],
+  );
+
+  /**
+   * Null when the tree starts from the normal opening, so ordinary analysis
+   * sends what it always did; a hand-built root travels as a FEN.
+   */
+  const startFen = useMemo(() => {
+    const fen = toFen(tree.start);
+    return fen === toFen(createGame()) ? null : fen;
+  }, [tree.start]);
+
+  /**
+   * Replaces the whole analysis — used by "Analyse from here". `then` plays a
+   * move on the freshly loaded tree, which is how a move on a rewound board
+   * both opens the analysis and lands as a branch in one step.
+   */
+  const load = useCallback((next: MoveTree, nodeId?: string, then?: Move) => {
+    // A different tree means different node ids; a stale cache would attach
+    // one line's evaluations to another's moves.
+    setEvals({});
+    setError(null);
+    const at = nodeId ?? next.root;
+    if (then) {
+      const result = addMove(next, at, then);
+      setTree(result.tree);
+      setCursor(result.nodeId);
+      return;
+    }
+    setTree(next);
+    setCursor(at);
+  }, []);
+
+  const reset = useCallback(() => load(createTree()), [load]);
+
+  /** Plays a move at the cursor; a move that diverges becomes a new variation. */
+  const play = useCallback(
+    (move: Move) => {
+      const result = addMove(tree, cursor, move);
+      setTree(result.tree);
+      setCursor(result.nodeId);
+    },
+    [tree, cursor],
+  );
+
+  /**
+   * Plays a move at an explicit node rather than at the cursor. Needed by
+   * "Best was …", where the move belongs to the cursor's *parent* position —
+   * resolving it at the cursor would either be a no-op or, for a drop, land
+   * the wrong colour's piece.
+   */
+  const playAt = useCallback(
+    (nodeId: string, move: Move) => {
+      const result = addMove(tree, nodeId, move);
+      setTree(result.tree);
+      setCursor(result.nodeId);
+    },
+    [tree],
+  );
+
+  const goTo = useCallback((nodeId: string) => setCursor(nodeId), []);
+
+  const back = useCallback(() => {
+    setCursor((current) => tree.nodes[current]?.parent ?? current);
+  }, [tree]);
+
+  const forward = useCallback(() => {
+    setCursor((current) => tree.nodes[current]?.children[0] ?? current);
+  }, [tree]);
+
+  const toStart = useCallback(() => setCursor(tree.root), [tree]);
+
+  const toEnd = useCallback(() => {
+    setCursor((current) => {
+      let id = current;
+      let node = tree.nodes[id];
+      while (node && node.children.length > 0) {
+        id = node.children[0];
+        node = tree.nodes[id];
+      }
+      return id;
+    });
+  }, [tree]);
+
+  const promote = useCallback(
+    (nodeId: string) => setTree(promoteToMainLine(tree, nodeId)),
+    [tree],
+  );
+
+  /** Deleting the branch the cursor sits on moves it up to the surviving parent. */
+  const deleteNode = useCallback(
+    (nodeId: string) => {
+      const doomed = new Set<string>();
+      const stack = [nodeId];
+      while (stack.length > 0) {
+        const id = stack.pop()!;
+        if (!tree.nodes[id] || doomed.has(id)) continue;
+        doomed.add(id);
+        stack.push(...tree.nodes[id].children);
+      }
+      const result = remove(tree, nodeId);
+      setTree(result.tree);
+      if (doomed.has(cursor)) setCursor(result.nodeId);
+    },
+    [tree, cursor],
+  );
+
+  // Evaluations are only comparable at one depth, so changing it starts over.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setEvals({});
+    setError(null);
+  }, [depth]);
+
+  // --- engine ---------------------------------------------------------------
+
+  const parentId = tree.nodes[cursor]?.parent ?? null;
+  const haveCursor = Boolean(evals[cursor]);
+  const haveParent = parentId === null || Boolean(evals[parentId]);
+
+  /**
+   * Searches in flight, one controller each, keyed by depth, root position and
+   * node — the cursor's result landing must not cancel the parent's search,
+   * which is still wanted and expensive to repeat. Stale keys are aborted by
+   * the effect below on its next run.
+   *
+   * The root position is part of the key because node ids are only unique
+   * within a tree: `createTree` always names the root "0", so a search on the
+   * old tree's root would otherwise look like a search on the new one's and
+   * survive `load`, writing the previous position's evaluation into the fresh
+   * cache. `startFen` discriminates exactly the trees that differ, and merges
+   * only the case where the two roots hold the same position — where the
+   * evaluation genuinely still applies.
+   */
+  const inFlight = useRef(new Map<string, AbortController>());
+
+  const abortSearches = useCallback((keep?: Set<string>) => {
+    for (const [key, controller] of inFlight.current) {
+      if (keep?.has(key)) continue;
+      controller.abort();
+      inFlight.current.delete(key);
+    }
+  }, []);
+
+  /** The one place a search key is built, so the three uses cannot drift. */
+  const searchKey = useCallback(
+    (nodeId: string) => `${depth}:${startFen ?? ""}:${nodeId}`,
+    [depth, startFen],
+  );
+
+  // Nothing outlives the hook.
+  useEffect(() => {
+    const searches = inFlight.current;
+    return () => {
+      for (const controller of searches.values()) controller.abort();
+      searches.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    // Navigating away, changing depth, replacing the tree or leaving analysis
+    // abandons searches for positions no longer on the board — and only those.
+    const keep =
+      enabled && !outcome.over
+        ? new Set([cursor, parentId].filter((id): id is string => id !== null).map(searchKey))
+        : new Set<string>();
+    abortSearches(keep);
+
+    if (!enabled || outcome.over) return;
+    if (haveCursor && haveParent) return;
+
+    let cancelled = false;
+
+    // Fired from the timer rather than the effect body, so stepping quickly
+    // through a line cancels before anything is sent.
+    const timer = setTimeout(() => {
+      if (cancelled) return;
+      const wanted: { id: string; path: string[] }[] = [];
+      if (!haveCursor) wanted.push({ id: cursor, path: uciPath });
+      // The parent is what turns an evaluation into a grade for the move
+      // played. Normally already cached — you arrive at a node from its parent
+      // — so this second request is the exception, not the rule.
+      if (!haveParent && parentId) wanted.push({ id: parentId, path: uciPath.slice(0, -1) });
+
+      for (const { id, path } of wanted) {
+        if (inFlight.current.has(searchKey(id))) continue;
+        const controller = new AbortController();
+        inFlight.current.set(searchKey(id), controller);
+        const settle = () => {
+          const key = searchKey(id);
+          if (inFlight.current.get(key) === controller) inFlight.current.delete(key);
+        };
+        fetchAnalysis(path, { fen: startFen, depth }, controller.signal)
+          .then((result) => {
+            settle();
+            if (controller.signal.aborted) return;
+            setEvals((current) => ({ ...current, [id]: result }));
+            setError(null);
+          })
+          .catch((failure: Error) => {
+            settle();
+            if (controller.signal.aborted || failure.name === "AbortError") return;
+            // A failed parent fetch only means no grade can be derived yet —
+            // the UI already handles that by showing no verdict. It must not
+            // be reported as an error, or it would hide a good cursor
+            // evaluation behind a misleading "engine offline" message.
+            if (id === cursor) setError({ cursor, message: failure.message });
+          });
+      }
+    }, DEBOUNCE_MS);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    abortSearches,
+    searchKey,
+    enabled,
+    cursor,
+    parentId,
+    haveCursor,
+    haveParent,
+    uciPath,
+    startFen,
+    depth,
+    outcome.over,
+  ]);
+
+  /** Grades taken from a review report, keyed by node. */
+  const seeded = useMemo(
+    () => (review ? seedVerdicts(tree, review) : NO_VERDICTS),
+    [review, tree],
+  );
+
+  /**
+   * A grade for every node whose own and whose parent's evaluation are both
+   * cached, which is every node you have walked through. Seeded grades win:
+   * they come from the review's own search, which is at least as deep.
+   */
+  const verdicts = useMemo(() => {
+    const out: Record<string, MoveVerdict> = { ...seeded };
+    for (const [id, child] of Object.entries(evals)) {
+      if (out[id]) continue;
+      const node = tree.nodes[id];
+      if (!node || node.parent === null || !node.move) continue;
+      const parent = evals[node.parent];
+      if (!parent) continue;
+      const alternatives = legalMoves(positionAt(tree, node.parent)).length;
+      const verdict = verdictFrom(parent, child, moveToUci(node.move), alternatives);
+      if (verdict) out[id] = verdict;
+    }
+    return out;
+  }, [seeded, evals, tree]);
+
+  const live = enabled && !outcome.over;
+  const current = evals[cursor] ?? null;
+  const currentError = error && error.cursor === cursor ? error.message : null;
+
+  return {
+    tree,
+    cursor,
+    state,
+    moves,
+    outcome,
+    path,
+    uciPath,
+    mainLine: useMemo(() => mainLine(tree), [tree]),
+    analysis: live ? current : null,
+    analysisError: live ? currentError : null,
+    analysing: live && !current && !currentError,
+    verdicts,
+    play,
+    playAt,
+    goTo,
+    back,
+    forward,
+    toStart,
+    toEnd,
+    promote,
+    deleteNode,
+    load,
+    reset,
+  };
+}

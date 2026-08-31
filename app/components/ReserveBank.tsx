@@ -18,6 +18,8 @@ interface ReserveBankProps {
   active: boolean;
   selectedPiece: DropType | null;
   draggingPiece: DropType | null;
+  /** Position editor: every slot responds, empty ones included. */
+  editable?: boolean;
   onPointerDown: (event: React.PointerEvent, piece: DropType) => void;
   onActivate: (piece: DropType) => void;
 }
@@ -33,11 +35,13 @@ export default function ReserveBank({
   active,
   selectedPiece,
   draggingPiece,
+  editable = false,
   onPointerDown,
   onActivate,
 }: ReserveBankProps) {
   return (
     <div
+      data-bank={color}
       className="flex shrink-0 items-center justify-center gap-1 rounded-lg p-1 sm:flex-col sm:gap-1.5 sm:self-center sm:p-1.5"
       style={{
         backgroundColor: theme.surface,
@@ -51,7 +55,7 @@ export default function ReserveBank({
 
       {DROP_TYPES.map((type) => {
         const count = reserve[type];
-        const usable = active && count > 0;
+        const usable = editable || (active && count > 0);
         const isSelected = selectedPiece === type;
         return (
           <button
@@ -69,8 +73,8 @@ export default function ReserveBank({
             }}
             className="relative flex aspect-square w-9 items-center justify-center rounded-md transition sm:w-11"
             style={{
-              backgroundColor: isSelected ? theme.selected : "rgba(255,255,255,0.07)",
-              opacity: count > 0 ? 1 : 0.28,
+              backgroundColor: isSelected ? theme.selected : theme.overlay,
+              opacity: count > 0 ? 1 : editable ? 0.45 : 0.28,
               touchAction: "none",
               cursor: usable ? "pointer" : "default",
             }}

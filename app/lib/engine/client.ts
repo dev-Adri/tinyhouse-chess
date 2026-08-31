@@ -1,4 +1,4 @@
-import type { BestMoveResponse, EngineHealth, GameReview } from "./types";
+import type { AnalysisResult, BestMoveResponse, EngineHealth, GameReview } from "./types";
 
 const BASE = "/api/engine";
 
@@ -21,11 +21,34 @@ export function fetchHealth(signal?: AbortSignal): Promise<EngineHealth> {
 export function fetchBestMove(
   moves: string[],
   level: number,
+  options: { seed?: number } = {},
   signal?: AbortSignal,
 ): Promise<BestMoveResponse> {
   return call<BestMoveResponse>("bestmove", {
     method: "POST",
-    body: JSON.stringify({ moves, level }),
+    // A seed makes one engine's choice reproducible; a fresh seed per move is
+    // what stops two engines at the same level replaying the same game.
+    body: JSON.stringify({ moves, level, ...(options.seed !== undefined ? { seed: options.seed } : {}) }),
+    signal,
+  });
+}
+
+/** Evaluates one position for the analysis board. Deterministic, unlike bestmove. */
+export function fetchAnalysis(
+  moves: string[],
+  options: { depth?: number; timeMs?: number; multipv?: number; fen?: string | null } = {},
+  signal?: AbortSignal,
+): Promise<AnalysisResult> {
+  return call<AnalysisResult>("analyse", {
+    method: "POST",
+    body: JSON.stringify({
+      moves,
+      depth: options.depth ?? 8,
+      timeMs: options.timeMs ?? 600,
+      multipv: options.multipv ?? 3,
+      // Omitted for the standard opening position, which the engine assumes.
+      ...(options.fen ? { fen: options.fen } : {}),
+    }),
     signal,
   });
 }
