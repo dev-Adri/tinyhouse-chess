@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createGame, getOutcome, legalMoves, toFen, type Move } from "@/app/lib/tinyhouse/engine";
 import { moveToUci } from "@/app/lib/tinyhouse/uci";
 import {
@@ -176,16 +176,50 @@ export function useAnalysis(
   const haveCursor = Boolean(evals[cursor]);
   const haveParent = parentId === null || Boolean(evals[parentId]);
 
+  /**
+   * Searches in flight, one controller each, keyed by depth and node — the
+   * cursor's result landing must not cancel the parent's search, which is
+   * still wanted and expensive to repeat. Stale keys (a different node, a
+   * different depth) are aborted by the effect below on its next run.
+   */
+  const inFlight = useRef(new Map<string, AbortController>());
+
+  const abortSearches = useCallback((keep?: Set<string>) => {
+    for (const [key, controller] of inFlight.current) {
+      if (keep?.has(key)) continue;
+      controller.abort();
+      inFlight.current.delete(key);
+    }
+  }, []);
+
+  // Nothing outlives the hook.
   useEffect(() => {
+    const searches = inFlight.current;
+    return () => {
+      for (const controller of searches.values()) controller.abort();
+      searches.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    // Navigating away, changing depth or leaving analysis abandons searches
+    // for positions no longer on the board — and only those.
+    const key = (id: string) => `${depth}:${id}`;
+    const keep =
+      enabled && !outcome.over
+        ? new Set([cursor, parentId].filter((id): id is string => id !== null).map(key))
+        : new Set<string>();
+    abortSearches(keep);
+
     if (!enabled || outcome.over) return;
     if (haveCursor && haveParent) return;
 
-    const controller = new AbortController();
     let cancelled = false;
 
     // Fired from the timer rather than the effect body, so stepping quickly
     // through a line cancels before anything is sent.
     const timer = setTimeout(() => {
+      if (cancelled) return;
       const wanted: { id: string; path: string[] }[] = [];
       if (!haveCursor) wanted.push({ id: cursor, path: uciPath });
       // The parent is what turns an evaluation into a grade for the move
@@ -194,14 +228,22 @@ export function useAnalysis(
       if (!haveParent && parentId) wanted.push({ id: parentId, path: uciPath.slice(0, -1) });
 
       for (const { id, path } of wanted) {
+        if (inFlight.current.has(key(id))) continue;
+        const controller = new AbortController();
+        inFlight.current.set(key(id), controller);
+        const settle = () => {
+          if (inFlight.current.get(key(id)) === controller) inFlight.current.delete(key(id));
+        };
         fetchAnalysis(path, { fen: startFen, depth }, controller.signal)
           .then((result) => {
-            if (cancelled) return;
+            settle();
+            if (controller.signal.aborted) return;
             setEvals((current) => ({ ...current, [id]: result }));
             setError(null);
           })
           .catch((failure: Error) => {
-            if (cancelled || failure.name === "AbortError") return;
+            settle();
+            if (controller.signal.aborted || failure.name === "AbortError") return;
             // A failed parent fetch only means no grade can be derived yet —
             // the UI already handles that by showing no verdict. It must not
             // be reported as an error, or it would hide a good cursor
@@ -214,9 +256,9 @@ export function useAnalysis(
     return () => {
       cancelled = true;
       clearTimeout(timer);
-      controller.abort();
     };
   }, [
+    abortSearches,
     enabled,
     cursor,
     parentId,
