@@ -42,7 +42,9 @@ import ReviewPanel from "./ReviewPanel";
 import SetupPanel from "./SetupPanel";
 import { useAnalysis } from "./useAnalysis";
 import { useBoardInteraction } from "./useBoardInteraction";
+import { useMoveSound } from "./useMoveSound";
 import { useSetup } from "./useSetup";
+import { readMuted, writeMuted } from "@/app/lib/tinyhouse/sound";
 
 /** Mirrors the levels the Python engine exposes; refreshed from /health. */
 const FALLBACK_LEVELS: EngineLevel[] = [
@@ -95,6 +97,8 @@ export default function TinyhouseGame() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** Analysis has no fixed orientation, so it gets a manual flip. */
   const [flipBoard, setFlipBoard] = useState(false);
+  /** Sound is on by default; the choice is remembered across sessions. */
+  const [muted, setMuted] = useState(false);
 
   // Review
   const [review, setReview] = useState<GameReview | null>(null);
@@ -142,6 +146,13 @@ export default function TinyhouseGame() {
     } catch {
       // storage unavailable — the choice still applies for this session
     }
+  }, []);
+
+  const toggleMuted = useCallback(() => {
+    setMuted((current) => {
+      writeMuted(!current);
+      return !current;
+    });
   }, []);
 
   // --- the live game ---------------------------------------------------------
@@ -276,6 +287,7 @@ export default function TinyhouseGame() {
   // once, before anything is on screen, so there is no cascade to speak of.
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
+    setMuted(readMuted());
     const storedAnalysis = loadAnalysis();
     // A hand-built start position is worth restoring even before a move is
     // played on it — otherwise arranging a board and refreshing loses it.
@@ -426,6 +438,18 @@ export default function TinyhouseGame() {
   // --- presentation ----------------------------------------------------------
 
   const displayed = analysisMode ? analysis.state : displayedLive;
+
+  // The move the board is currently showing, which is what should sound.
+  const displayedSan = analysisMode
+    ? (analysis.tree.nodes[analysis.cursor]?.san || null)
+    : (displayedLive.history[displayedLive.history.length - 1]?.san ?? null);
+
+  useMoveSound({
+    san: displayedSan,
+    key: analysisMode ? `analysis:${analysis.cursor}` : `live:${viewPly}`,
+    muted,
+  });
+
   const displayedOutcome = useMemo(() => {
     if (analysisMode) return analysis.outcome;
     if (rewound || inReview) return getOutcome(displayedLive);
@@ -583,6 +607,17 @@ export default function TinyhouseGame() {
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={toggleMuted}
+            aria-pressed={muted}
+            aria-label={muted ? "Unmute sounds" : "Mute sounds"}
+            title={muted ? "Unmute sounds" : "Mute sounds"}
+            className="rounded-full px-3 py-1 text-xs font-bold"
+            style={{ backgroundColor: theme.surface, color: theme.surfaceText }}
+          >
+            {muted ? "🔇" : "🔊"}
+          </button>
           {analysisMode && (
             <button
               type="button"
