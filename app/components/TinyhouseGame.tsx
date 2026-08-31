@@ -758,7 +758,9 @@ export default function TinyhouseGame() {
               ? "Analysis"
               : mode === "bot"
                 ? `vs ${levels.find((entry) => entry.level === level)?.name ?? "Bot"}`
-                : "2 players"}
+                : enginesMode
+                  ? "Bot vs Bot"
+                  : "2 players"}
           </span>
         </div>
       </header>
