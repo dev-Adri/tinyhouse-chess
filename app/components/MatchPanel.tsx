@@ -16,6 +16,8 @@ interface MatchPanelProps {
   levels: EngineLevel[];
   /** A match is under way — settings are fixed until it ends. */
   started: boolean;
+  /** The match has been decided, so playback has nothing left to control. */
+  gameOver: boolean;
   canReview: boolean;
   reviewing: boolean;
   inReview: boolean;
@@ -58,6 +60,7 @@ export default function MatchPanel({
   humanSide,
   levels,
   started,
+  gameOver,
   canReview,
   reviewing,
   inReview,
@@ -309,8 +312,8 @@ export default function MatchPanel({
               />
             </label>
 
-            {/* Playback, available only once the machines are actually playing. */}
-            {started && (
+            {/* Playback, available only while the machines are actually playing. */}
+            {started && !gameOver && (
               <div className="flex gap-1">
                 <button
                   type="button"

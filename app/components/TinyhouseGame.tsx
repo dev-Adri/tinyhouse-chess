@@ -822,6 +822,7 @@ export default function TinyhouseGame() {
           humanSide={humanSide}
           levels={levels}
           started={started}
+          gameOver={outcome.over}
           canReview={canReview}
           reviewing={reviewing}
           inReview={inReview}
