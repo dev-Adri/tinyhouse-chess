@@ -187,7 +187,11 @@ export function useAnalysis(
           })
           .catch((failure: Error) => {
             if (cancelled || failure.name === "AbortError") return;
-            setError({ cursor, message: failure.message });
+            // A failed parent fetch only means no grade can be derived yet —
+            // the UI already handles that by showing no verdict. It must not
+            // be reported as an error, or it would hide a good cursor
+            // evaluation behind a misleading "engine offline" message.
+            if (id === cursor) setError({ cursor, message: failure.message });
           });
       }
     }, DEBOUNCE_MS);
