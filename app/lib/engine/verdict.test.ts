@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { AnalysisLine, AnalysisResult, PlyReview } from "./types";
+import { legalMoves, movesEqual, type GameState, type Move } from "@/app/lib/tinyhouse/engine";
+import { moveFromUci } from "@/app/lib/tinyhouse/uci";
+import { addMove, createTree, mainLine, positionAt, type MoveTree } from "@/app/lib/tinyhouse/variations";
+import type { AnalysisLine, AnalysisResult, GameReview, PlyReview } from "./types";
 import {
   GREAT_MARGIN,
   MAX_LOSS,
   classifyMove,
+  seedVerdicts,
   verdictFrom,
   verdictFromReview,
 } from "./verdict";
@@ -187,5 +191,107 @@ describe("verdictFromReview", () => {
       scoreWhite: -260,
       mateWhite: null,
     });
+  });
+});
+
+// --- seedVerdicts ----------------------------------------------------------
+
+/** The move written as `uci`, asserted legal in `state`. */
+function move(state: GameState, uci: string): Move {
+  const wanted = moveFromUci(uci);
+  const found = legalMoves(state).find((candidate) => movesEqual(candidate, wanted));
+  if (!found) throw new Error(`${uci} is not legal here`);
+  return found;
+}
+
+/** A tree holding one line of real moves played from the opening position. */
+function lineTree(ucis: string[]): MoveTree {
+  let tree = createTree();
+  let nodeId = tree.root;
+  for (const uci of ucis) {
+    const result = addMove(tree, nodeId, move(positionAt(tree, nodeId), uci));
+    tree = result.tree;
+    nodeId = result.nodeId;
+  }
+  return tree;
+}
+
+/** SAN along the main line, skipping the root, which no move reached. */
+const playedSan = (tree: MoveTree) =>
+  mainLine(tree)
+    .slice(1)
+    .map((id) => tree.nodes[id].san);
+
+function ply(index: number, san: string, overrides: Partial<PlyReview> = {}): PlyReview {
+  return {
+    ply: index,
+    color: index % 2 === 0 ? "w" : "b",
+    uci: "a2a3",
+    san,
+    eval_before: 0,
+    eval_after: 10 * (index + 1),
+    mate_before: null,
+    mate_after: null,
+    best_uci: "a2a3",
+    best_san: "a3",
+    best_pv: ["a2a3"],
+    loss: 10 * index,
+    classification: "good",
+    accuracy: 90,
+    alternatives: [],
+    ...overrides,
+  };
+}
+
+const report = (plies: PlyReview[]): GameReview => ({
+  plies,
+  accuracy: { w: 90, b: 90 },
+  counts: { w: {}, b: {} } as GameReview["counts"],
+  depth: 8,
+  classifications: [],
+});
+
+describe("seedVerdicts", () => {
+  it("maps each report ply to the node the move reached", () => {
+    const tree = lineTree(["a2a3", "d3d2", "b1b2"]);
+    const line = mainLine(tree);
+    const san = playedSan(tree);
+    const review = report(san.map((text, index) => ply(index, text)));
+
+    const seeded = seedVerdicts(tree, review);
+
+    // Ply i is line[i + 1]: the root itself is never graded.
+    expect(Object.keys(seeded).sort()).toEqual(line.slice(1).sort());
+    expect(seeded[line[0]]).toBeUndefined();
+    for (let index = 0; index < san.length; index += 1) {
+      expect(seeded[line[index + 1]].scoreWhite, `ply ${index}`).toBe(10 * (index + 1));
+    }
+  });
+
+  it("stops at a SAN mismatch and leaves the later plies unseeded", () => {
+    const tree = lineTree(["a2a3", "d3d2", "b1b2"]);
+    const line = mainLine(tree);
+    const san = playedSan(tree);
+    const plies = san.map((text, index) => ply(index, text));
+    plies[1] = ply(1, "Wd2xa5"); // a move this tree does not contain
+
+    const seeded = seedVerdicts(tree, report(plies));
+
+    expect(Object.keys(seeded)).toEqual([line[1]]);
+  });
+
+  it("stops cleanly when the tree is shorter than the report", () => {
+    const tree = lineTree(["a2a3"]);
+    const line = mainLine(tree);
+    const full = lineTree(["a2a3", "d3d2", "b1b2"]);
+    const review = report(playedSan(full).map((text, index) => ply(index, text)));
+
+    const seeded = seedVerdicts(tree, review);
+
+    expect(Object.keys(seeded)).toEqual([line[1]]);
+  });
+
+  it("yields an empty map for an empty report", () => {
+    expect(seedVerdicts(lineTree(["a2a3"]), report([]))).toEqual({});
   });
 });

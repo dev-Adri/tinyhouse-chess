@@ -11,8 +11,9 @@
  * only just played, with no round trip; the tests pin them to the Python values.
  */
 
+import { mainLine, type MoveTree } from "@/app/lib/tinyhouse/variations";
 import { toWhiteRelative } from "./classification";
-import type { AnalysisResult, Classification, PlyReview } from "./types";
+import type { AnalysisResult, Classification, GameReview, PlyReview } from "./types";
 
 /** A move is "great" when it is the only one that holds the position. */
 export const GREAT_MARGIN = 150;
@@ -103,4 +104,24 @@ export function verdictFromReview(ply: PlyReview): MoveVerdict {
     scoreWhite: ply.eval_after,
     mateWhite: ply.mate_after,
   };
+}
+
+/**
+ * Pins a review report's grades to the nodes of a tree, keyed by node id.
+ *
+ * The report describes the game as played, which `treeFromHistory` lays down
+ * as the main line, so ply `i` is `mainLine(tree)[i + 1]` — the +1 skips the
+ * root, which no move reached. The SAN check stops a report being pinned to a
+ * tree it no longer describes: the walk ends at the first node that does not
+ * match, leaving the rest of the report unseeded rather than mislabelling it.
+ */
+export function seedVerdicts(tree: MoveTree, review: GameReview): Record<string, MoveVerdict> {
+  const line = mainLine(tree);
+  const out: Record<string, MoveVerdict> = {};
+  for (const ply of review.plies) {
+    const id = line[ply.ply + 1];
+    if (!id || tree.nodes[id].san !== ply.san) break;
+    out[id] = verdictFromReview(ply);
+  }
+  return out;
 }

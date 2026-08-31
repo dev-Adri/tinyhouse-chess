@@ -15,7 +15,7 @@ import {
 } from "@/app/lib/tinyhouse/variations";
 import { fetchAnalysis } from "@/app/lib/engine/client";
 import type { AnalysisResult, GameReview } from "@/app/lib/engine/types";
-import { verdictFrom, verdictFromReview, type MoveVerdict } from "@/app/lib/engine/verdict";
+import { seedVerdicts, verdictFrom, type MoveVerdict } from "@/app/lib/engine/verdict";
 
 /** Long enough that stepping through a line does not queue a search per position. */
 const DEBOUNCE_MS = 250;
@@ -270,23 +270,11 @@ export function useAnalysis(
     outcome.over,
   ]);
 
-  /**
-   * Grades taken from a review report, keyed by node. The report describes the
-   * game as played, which `treeFromHistory` lays down as the main line, so ply
-   * i is `mainLine(tree)[i + 1]`. The SAN check stops a report being pinned to
-   * a tree it no longer describes.
-   */
-  const seeded = useMemo(() => {
-    if (!review) return NO_VERDICTS;
-    const line = mainLine(tree);
-    const out: Record<string, MoveVerdict> = {};
-    for (const ply of review.plies) {
-      const id = line[ply.ply + 1];
-      if (!id || tree.nodes[id].san !== ply.san) break;
-      out[id] = verdictFromReview(ply);
-    }
-    return out;
-  }, [review, tree]);
+  /** Grades taken from a review report, keyed by node. */
+  const seeded = useMemo(
+    () => (review ? seedVerdicts(tree, review) : NO_VERDICTS),
+    [review, tree],
+  );
 
   /**
    * A grade for every node whose own and whose parent's evaluation are both
