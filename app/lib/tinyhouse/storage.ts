@@ -23,7 +23,7 @@ export const MAX_DEPTH = 12;
 export const DEFAULT_DEPTH = 8;
 
 /** Mirrors OpponentMode, kept local so this module stays under the components. */
-const MODES = ["human", "bot", "analysis"] as const;
+const MODES = ["human", "bot", "engines", "analysis"] as const;
 type PersistedMode = (typeof MODES)[number];
 
 export interface StoredGame {

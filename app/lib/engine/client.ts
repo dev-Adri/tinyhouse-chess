@@ -21,11 +21,14 @@ export function fetchHealth(signal?: AbortSignal): Promise<EngineHealth> {
 export function fetchBestMove(
   moves: string[],
   level: number,
+  options: { seed?: number } = {},
   signal?: AbortSignal,
 ): Promise<BestMoveResponse> {
   return call<BestMoveResponse>("bestmove", {
     method: "POST",
-    body: JSON.stringify({ moves, level }),
+    // A seed makes one engine's choice reproducible; a fresh seed per move is
+    // what stops two engines at the same level replaying the same game.
+    body: JSON.stringify({ moves, level, ...(options.seed !== undefined ? { seed: options.seed } : {}) }),
     signal,
   });
 }

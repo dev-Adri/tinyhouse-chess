@@ -94,6 +94,12 @@ export default function TinyhouseGame() {
   const [mode, setMode] = useState<OpponentMode>("human");
   const [level, setLevel] = useState(3);
   const [humanSide, setHumanSide] = useState<Color>("w");
+  /** Machine-versus-machine: a level per side, a pacing floor, and playback. */
+  const [engineLevels, setEngineLevels] = useState<Record<Color, number>>({ w: 3, b: 3 });
+  const [moveDelayMs, setMoveDelayMs] = useState(1000);
+  const [paused, setPaused] = useState(false);
+  /** Moves the machines may play while paused; Step sets it to one. */
+  const [steps, setSteps] = useState(0);
   const [levels, setLevels] = useState<EngineLevel[]>(FALLBACK_LEVELS);
   const [engineError, setEngineError] = useState<string | null>(null);
   /** Bumped by the retry button so the bot effect runs again after a failure. */
@@ -194,6 +200,10 @@ export default function TinyhouseGame() {
 
   const botToMove = started && mode === "bot" && game.turn === botSide && !outcome.over;
 
+  const enginesMode = mode === "engines";
+  /** True while the machines are free to move: paused holds them, Step lets one through. */
+  const enginesRunning = enginesMode && started && !outcome.over && (!paused || steps > 0);
+
   // --- what the player can act on -------------------------------------------
 
   const rewoundMoves = useMemo(
@@ -215,7 +225,8 @@ export default function TinyhouseGame() {
    */
   const branching = !analysisMode && (inReview || outcome.over);
 
-  const locked = !analysisMode && !branching && (!started || botToMove || rewound);
+  const locked =
+    !analysisMode && !branching && (enginesMode || !started || botToMove || rewound);
 
   /** Hands the played game to the analysis board, optionally playing one move. */
   const openAnalysis = useCallback(
@@ -259,8 +270,22 @@ export default function TinyhouseGame() {
     onMove: handleMove,
   });
 
-  /** A request is in flight for exactly as long as it is the bot's turn. */
-  const thinking = botToMove && !engineError && interaction.promotion === null && !inReview;
+  /**
+   * The colour the engine is to move for, or null when no engine should be
+   * thinking. One value covers both machine modes, so there is a single place
+   * where "is it the computer's turn" is decided.
+   */
+  const engineTurn: Color | null =
+    interaction.promotion || inReview
+      ? null
+      : botToMove
+        ? game.turn
+        : enginesRunning
+          ? game.turn
+          : null;
+
+  /** A request is in flight for exactly as long as a machine is to move. */
+  const thinking = engineTurn !== null && !engineError;
 
   const resetBoard = useCallback(() => {
     setGame(createGame());
@@ -272,6 +297,8 @@ export default function TinyhouseGame() {
   /** Begin a match with the settings currently chosen. */
   const startMatch = useCallback(() => {
     resetBoard();
+    setPaused(false);
+    setSteps(0);
     if (mode === "analysis") {
       analysis.reset();
       setup.reset();
@@ -320,6 +347,9 @@ export default function TinyhouseGame() {
       setLevel(stored.level);
       setHumanSide(stored.humanSide);
       setStarted(stored.started);
+      // A restored machine game waits for a deliberate Resume rather than
+      // firing off a search the moment the page loads.
+      if (stored.mode === "engines") setPaused(true);
       setRestored(stored.game.history.length);
       if (stored.mode === "analysis" && !hasAnalysis) setEditing(true);
     }
@@ -346,20 +376,36 @@ export default function TinyhouseGame() {
     saveDepths({ analysis: analysisDepth, review: reviewDepth });
   }, [analysisDepth, reviewDepth]);
 
-  // --- engine: the bot's move ------------------------------------------------
+  // --- engine: the machine's move -------------------------------------------
 
+  // One effect drives both machine modes. In `engines` mode the reply is held
+  // until `moveDelayMs` has passed since the request went out, so the delay is
+  // a floor on the interval between moves rather than an addition to the
+  // engine's own thinking time.
   useEffect(() => {
-    if (mode !== "bot" || !botToMove || interaction.promotion || inReview) return;
+    if (engineTurn === null) return;
 
     const controller = new AbortController();
+    const requestedAt = Date.now();
+    const askedLevel = enginesMode ? engineLevels[engineTurn] : level;
+    const delay = enginesMode ? moveDelayMs : 0;
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-    fetchBestMove(uciMoves, level, controller.signal)
+    fetchBestMove(uciMoves, askedLevel, { seed: Math.floor(Math.random() * 2 ** 31) }, controller.signal)
       .then((response) => {
         if (cancelled) return;
         const move = moveFromUci(response.move);
-        // Guard against a stale reply landing on a position that moved on.
-        setGame((current) => (current === game ? applyMove(current, move) : current));
+        timer = setTimeout(
+          () => {
+            if (cancelled) return;
+            // Guard against a stale reply landing on a position that moved on.
+            setGame((current) => (current === game ? applyMove(current, move) : current));
+            // A stepped move is spent once it has been played.
+            if (enginesMode && paused) setSteps((current) => Math.max(0, current - 1));
+          },
+          Math.max(0, delay - (Date.now() - requestedAt)),
+        );
       })
       .catch((error: Error) => {
         if (!cancelled && error.name !== "AbortError") setEngineError(error.message);
@@ -367,9 +413,26 @@ export default function TinyhouseGame() {
 
     return () => {
       cancelled = true;
+      if (timer) clearTimeout(timer);
       controller.abort();
     };
-  }, [mode, botToMove, interaction.promotion, inReview, uciMoves, level, game, retryToken]);
+  }, [
+    engineTurn,
+    enginesMode,
+    engineLevels,
+    moveDelayMs,
+    paused,
+    uciMoves,
+    level,
+    game,
+    retryToken,
+  ]);
+
+  // Watching from a rewound board would fight the live game for the display.
+  useEffect(() => {
+    /* eslint-disable-next-line react-hooks/set-state-in-effect */
+    if (enginesMode && rewound) setPaused(true);
+  }, [enginesMode, rewound]);
 
   // --- engine: the game review ----------------------------------------------
 
@@ -745,6 +808,9 @@ export default function TinyhouseGame() {
           inReview={inReview}
           canAnalyse={game.history.length > 0}
           open={settingsOpen}
+          engineLevels={engineLevels}
+          moveDelayMs={moveDelayMs}
+          paused={paused}
           onToggle={() => setSettingsOpen((current) => !current)}
           onModeChange={(next) => {
             setMode(next);
@@ -769,6 +835,12 @@ export default function TinyhouseGame() {
           }}
           onAnalyse={() => openAnalysis(viewPly)}
           onThemeSelect={selectTheme}
+          onEngineLevelChange={(color, next) =>
+            setEngineLevels((current) => ({ ...current, [color]: next }))
+          }
+          onDelayChange={setMoveDelayMs}
+          onTogglePause={() => setPaused((current) => !current)}
+          onStep={() => setSteps(1)}
         />
 
         {/* Board and reserves, sized from the space that is left so the page
