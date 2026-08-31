@@ -15,6 +15,18 @@ PROD=0
 
 ENGINE_HOST="${ENGINE_HOST:-127.0.0.1}"
 
+# Fail fast and legibly: without these the engine dies inside the port wait
+# loop below, which reads as a timeout rather than a missing dependency.
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "python3 not found. Install Python 3.11 or newer, then run this again." >&2
+  exit 1
+fi
+if ! (cd engine && python3 -c "import tinyhouse" >/dev/null 2>&1); then
+  echo "Cannot import the 'tinyhouse' engine package from ./engine." >&2
+  echo "Check that ./engine/tinyhouse/__init__.py exists and python3 can read it." >&2
+  exit 1
+fi
+
 port_open() { (exec 3<>"/dev/tcp/${ENGINE_HOST}/$1") 2>/dev/null; }
 
 # First free port >= $1.
@@ -58,7 +70,7 @@ if [[ "$PROD" -eq 1 ]]; then
   echo "Building Next.js app..."
   npm run build
   echo "Starting Next.js app (production)..."
-  ENGINE_URL="http://${ENGINE_HOST}:${ENGINE_PORT}" npm run start -- -p "$APP_PORT" &
+  ENGINE_URL="http://${ENGINE_HOST}:${ENGINE_PORT}" npm run next:start -- -p "$APP_PORT" &
 else
   echo "Starting Next.js dev server..."
   ENGINE_URL="http://${ENGINE_HOST}:${ENGINE_PORT}" npm run dev -- -p "$APP_PORT" &

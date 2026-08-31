@@ -3,9 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "start": "./dev.sh",
+    "start:prod": "./dev.sh --prod",
     "dev": "next dev",
+    "next:start": "next start",
     "build": "next build",
-    "start": "next start",
     "lint": "eslint",
     "test": "vitest run"
   },
