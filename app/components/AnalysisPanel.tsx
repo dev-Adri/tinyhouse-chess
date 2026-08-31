@@ -110,7 +110,7 @@ export default function AnalysisPanel({
               type="button"
               onClick={onBackToReview}
               className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide opacity-70 hover:opacity-100"
-              style={{ backgroundColor: "rgba(255,255,255,0.1)" }}
+              style={{ backgroundColor: theme.overlay }}
             >
               Back to review
             </button>
@@ -119,7 +119,7 @@ export default function AnalysisPanel({
             type="button"
             onClick={onEditPosition}
             className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide opacity-70 hover:opacity-100"
-            style={{ backgroundColor: "rgba(255,255,255,0.1)" }}
+            style={{ backgroundColor: theme.overlay }}
           >
             Edit
           </button>
@@ -131,7 +131,7 @@ export default function AnalysisPanel({
       {label && (
         <div
           className="shrink-0 rounded-lg px-2 py-1.5 text-xs sm:min-h-[3.25rem]"
-          style={{ backgroundColor: "rgba(255,255,255,0.07)" }}
+          style={{ backgroundColor: theme.overlay }}
         >
           <div className="flex items-center gap-2">
             {verdict ? (
@@ -140,7 +140,7 @@ export default function AnalysisPanel({
                 className="h-5 w-5 xl:h-6 xl:w-6"
               />
             ) : (
-              <span className="h-5 w-5 rounded-full xl:h-6 xl:w-6" style={{ backgroundColor: "rgba(255,255,255,0.12)" }} />
+              <span className="h-5 w-5 rounded-full xl:h-6 xl:w-6" style={{ backgroundColor: theme.overlay }} />
             )}
             <span className="font-bold">{label}</span>
             <span className="opacity-70">
@@ -155,7 +155,7 @@ export default function AnalysisPanel({
                 onClick={() => onPlayBest(verdict!.bestUci)}
                 title="Play this move instead — opens an alternate line"
                 className="rounded px-1 font-bold underline decoration-dotted underline-offset-2 transition hover:brightness-125"
-                style={{ backgroundColor: "rgba(255,255,255,0.12)" }}
+                style={{ backgroundColor: theme.overlayStrong }}
               >
                 {verdict!.bestSan}
               </button>
@@ -168,7 +168,7 @@ export default function AnalysisPanel({
       {/* Engine verdict on the position now on the board. */}
       <div
         className="shrink-0 rounded-lg px-2 py-1.5 text-xs sm:min-h-[5.5rem]"
-        style={{ backgroundColor: "rgba(255,255,255,0.07)" }}
+        style={{ backgroundColor: theme.overlay }}
       >
         {/* The stepper lives beside the depth line rather than in the header:
             the header row overflowed the narrow panel, which clips. */}
@@ -192,6 +192,7 @@ export default function AnalysisPanel({
             )}
           </div>
           <DepthStepper
+            theme={theme}
             value={depth}
             onChange={onDepthChange}
             title="Engine search depth for this board"
@@ -208,7 +209,7 @@ export default function AnalysisPanel({
                   onClick={() => onPlayLine(line.uci)}
                   title={line.pv.join(" ")}
                   className="flex items-baseline gap-2 rounded px-1 py-0.5 text-left text-[11px] transition hover:brightness-125"
-                  style={{ backgroundColor: index === 0 ? "rgba(255,255,255,0.1)" : "transparent" }}
+                  style={{ backgroundColor: index === 0 ? theme.overlayStrong : "transparent" }}
                 >
                   <span className="w-3 shrink-0 opacity-50 tabular-nums">{index + 1}</span>
                   <span className="w-14 shrink-0 font-semibold">{line.san}</span>

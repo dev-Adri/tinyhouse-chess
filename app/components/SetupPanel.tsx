@@ -52,7 +52,7 @@ export default function SetupPanel({
       onClick={() => onToolChange(candidate)}
       className="flex aspect-square items-center justify-center rounded-md transition hover:brightness-125"
       style={{
-        backgroundColor: selected(candidate) ? theme.accent : "rgba(255,255,255,0.08)",
+        backgroundColor: selected(candidate) ? theme.accent : theme.overlay,
       }}
     >
       {content}
@@ -108,7 +108,7 @@ export default function SetupPanel({
               onClick={() => onTurnChange(side)}
               className="flex h-8 w-9 items-center justify-center transition"
               style={{
-                backgroundColor: turn === side ? theme.accent : "rgba(255,255,255,0.08)",
+                backgroundColor: turn === side ? theme.accent : theme.overlay,
               }}
             >
               <span
@@ -128,7 +128,7 @@ export default function SetupPanel({
           type="button"
           onClick={onReset}
           className="h-8 flex-1 rounded-lg text-[11px] font-bold uppercase tracking-wide transition hover:brightness-125"
-          style={{ backgroundColor: "rgba(255,255,255,0.1)" }}
+          style={{ backgroundColor: theme.overlay }}
         >
           Start pos.
         </button>
@@ -136,7 +136,7 @@ export default function SetupPanel({
           type="button"
           onClick={onClear}
           className="h-8 flex-1 rounded-lg text-[11px] font-bold uppercase tracking-wide transition hover:brightness-125"
-          style={{ backgroundColor: "rgba(255,255,255,0.1)" }}
+          style={{ backgroundColor: theme.overlay }}
         >
           Clear
         </button>

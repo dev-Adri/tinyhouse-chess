@@ -26,6 +26,14 @@ export interface BoardTheme {
   lastMove: string;
   target: string;
   accent: string;
+  /**
+   * Overlays for chrome drawn on top of `surface`: faint fills, borders and
+   * chips take `overlay`, selected/active/cursor markers take `overlayStrong`.
+   * Dark themes lighten, light themes darken — a white overlay is invisible
+   * on a white panel.
+   */
+  overlay: string;
+  overlayStrong: string;
 }
 
 export const THEMES: BoardTheme[] = [
@@ -48,6 +56,8 @@ export const THEMES: BoardTheme[] = [
     lastMove: "#d9b25f",
     target: "#3f7d3f",
     accent: "#e0a33c",
+    overlay: "rgba(255,255,255,0.08)",
+    overlayStrong: "rgba(255,255,255,0.2)",
   },
   {
     id: "slate",
@@ -68,6 +78,8 @@ export const THEMES: BoardTheme[] = [
     lastMove: "#5b8fc7",
     target: "#2f8f6b",
     accent: "#5aa9ff",
+    overlay: "rgba(255,255,255,0.08)",
+    overlayStrong: "rgba(255,255,255,0.2)",
   },
   {
     id: "emerald",
@@ -88,6 +100,8 @@ export const THEMES: BoardTheme[] = [
     lastMove: "#cbd35a",
     target: "#2f7f4f",
     accent: "#9ccb5a",
+    overlay: "rgba(255,255,255,0.08)",
+    overlayStrong: "rgba(255,255,255,0.2)",
   },
   {
     id: "midnight",
@@ -108,6 +122,8 @@ export const THEMES: BoardTheme[] = [
     lastMove: "#4d5f8f",
     target: "#3fa08a",
     accent: "#8aa4ff",
+    overlay: "rgba(255,255,255,0.08)",
+    overlayStrong: "rgba(255,255,255,0.2)",
   },
   {
     id: "coral",
@@ -128,6 +144,8 @@ export const THEMES: BoardTheme[] = [
     lastMove: "#f2a07f",
     target: "#3f8f74",
     accent: "#ff9c72",
+    overlay: "rgba(255,255,255,0.08)",
+    overlayStrong: "rgba(255,255,255,0.2)",
   },
   {
     id: "amethyst",
@@ -148,6 +166,8 @@ export const THEMES: BoardTheme[] = [
     lastMove: "#b79ce8",
     target: "#3f9a86",
     accent: "#b38dff",
+    overlay: "rgba(255,255,255,0.08)",
+    overlayStrong: "rgba(255,255,255,0.2)",
   },
   {
     id: "marble",
@@ -168,6 +188,8 @@ export const THEMES: BoardTheme[] = [
     lastMove: "#dcd08a",
     target: "#5f9e5f",
     accent: "#ba712a",
+    overlay: "rgba(0,0,0,0.06)",
+    overlayStrong: "rgba(0,0,0,0.14)",
   },
   {
     id: "sandstone",
@@ -188,6 +210,8 @@ export const THEMES: BoardTheme[] = [
     lastMove: "#e0c184",
     target: "#5d8f4f",
     accent: "#bb6d27",
+    overlay: "rgba(0,0,0,0.06)",
+    overlayStrong: "rgba(0,0,0,0.14)",
   },
   {
     id: "ice",
@@ -208,6 +232,8 @@ export const THEMES: BoardTheme[] = [
     lastMove: "#bcd8ea",
     target: "#4f9c86",
     accent: "#2f7fb0",
+    overlay: "rgba(0,0,0,0.06)",
+    overlayStrong: "rgba(0,0,0,0.14)",
   },
   {
     id: "rose",
@@ -228,6 +254,8 @@ export const THEMES: BoardTheme[] = [
     lastMove: "#d98fa0",
     target: "#4f8f5f",
     accent: "#e0657f",
+    overlay: "rgba(255,255,255,0.08)",
+    overlayStrong: "rgba(255,255,255,0.2)",
   },
   {
     id: "forest",
@@ -248,6 +276,8 @@ export const THEMES: BoardTheme[] = [
     lastMove: "#b6c184",
     target: "#3f8f6a",
     accent: "#8fbf4a",
+    overlay: "rgba(255,255,255,0.08)",
+    overlayStrong: "rgba(255,255,255,0.2)",
   },
   {
     id: "mono",
@@ -268,6 +298,8 @@ export const THEMES: BoardTheme[] = [
     lastMove: "#8c8c8c",
     target: "#00b36b",
     accent: "#f2f2f2",
+    overlay: "rgba(255,255,255,0.08)",
+    overlayStrong: "rgba(255,255,255,0.2)",
   },
 ];
 

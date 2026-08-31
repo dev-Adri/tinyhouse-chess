@@ -95,7 +95,7 @@ export default function ThemePicker({ theme, onSelect }: ThemePickerProps) {
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
         className="flex h-9 w-full items-center gap-2 rounded-lg px-2 text-xs font-bold transition hover:brightness-125"
-        style={{ backgroundColor: "rgba(255,255,255,0.1)", color: theme.surfaceText }}
+        style={{ backgroundColor: theme.overlay, color: theme.surfaceText }}
       >
         <Swatch theme={theme} />
         <span className="flex-1 text-left">{theme.name}</span>
@@ -126,7 +126,7 @@ export default function ThemePicker({ theme, onSelect }: ThemePickerProps) {
                     aria-selected={active}
                     onClick={() => choose(option.id)}
                     className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs font-semibold transition hover:brightness-125"
-                    style={{ backgroundColor: active ? "rgba(255,255,255,0.16)" : "transparent" }}
+                    style={{ backgroundColor: active ? theme.overlayStrong : "transparent" }}
                   >
                     <Swatch theme={option} />
                     <span className="flex-1">{option.name}</span>

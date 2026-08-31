@@ -67,7 +67,7 @@ export default function ReviewPanel({
       onClick={() => onPlay(ply, uci)}
       title="Play this move instead — opens an alternate line"
       className="rounded px-1 font-bold underline decoration-dotted underline-offset-2 transition hover:brightness-125"
-      style={{ backgroundColor: "rgba(255,255,255,0.12)" }}
+      style={{ backgroundColor: theme.overlayStrong }}
     >
       {san}
     </button>
@@ -80,6 +80,7 @@ export default function ReviewPanel({
       <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
         <h2 className="text-sm font-black uppercase tracking-wide">Game review</h2>
         <DepthStepper
+          theme={theme}
           value={depth}
           onChange={onDepthChange}
           disabled={reviewing}
@@ -89,7 +90,7 @@ export default function ReviewPanel({
           type="button"
           onClick={onClose}
           className="rounded-full px-2 py-0.5 text-xs font-bold opacity-70 hover:opacity-100"
-          style={{ backgroundColor: "rgba(255,255,255,0.1)" }}
+          style={{ backgroundColor: theme.overlay }}
         >
           Close
         </button>
@@ -101,7 +102,7 @@ export default function ReviewPanel({
           <div
             key={color}
             className="rounded-lg px-2 py-1.5 text-center"
-            style={{ backgroundColor: "rgba(255,255,255,0.07)" }}
+            style={{ backgroundColor: theme.overlay }}
           >
             <div className="text-[10px] font-bold uppercase tracking-wide opacity-70">
               {color === "w" ? "White" : "Black"}
@@ -155,7 +156,7 @@ export default function ReviewPanel({
             title={button.title}
             onClick={() => move(button.delta)}
             className="h-8 flex-1 rounded text-sm font-bold transition hover:brightness-125"
-            style={{ backgroundColor: "rgba(255,255,255,0.1)" }}
+            style={{ backgroundColor: theme.overlay }}
           >
             {button.label}
           </button>
@@ -166,7 +167,7 @@ export default function ReviewPanel({
           between one and three lines. */}
       <div
         className="h-[4.75rem] shrink-0 overflow-hidden rounded-lg px-2 py-1.5 text-xs leading-snug"
-        style={{ backgroundColor: "rgba(255,255,255,0.07)" }}
+        style={{ backgroundColor: theme.overlay }}
       >
         {selected ? (
           <>
@@ -220,7 +221,7 @@ export default function ReviewPanel({
               type="button"
               onClick={() => onSelect(ply.ply + 1)}
               className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-xs"
-              style={{ backgroundColor: isSelected ? "rgba(255,255,255,0.16)" : "transparent" }}
+              style={{ backgroundColor: isSelected ? theme.overlayStrong : "transparent" }}
             >
               <span className="w-7 text-right opacity-50 tabular-nums">
                 {ply.color === "w" ? `${Math.floor(ply.ply / 2) + 1}.` : ""}

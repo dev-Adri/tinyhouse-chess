@@ -90,7 +90,7 @@ export default function MatchPanel({
   const analysing = mode === "analysis";
 
   const chip = (active: boolean) => ({
-    backgroundColor: active ? theme.accent : "rgba(255,255,255,0.08)",
+    backgroundColor: active ? theme.accent : theme.overlay,
     color: active ? theme.backdrop : theme.surfaceText,
   });
 
@@ -111,7 +111,7 @@ export default function MatchPanel({
       onClick={onReview}
       disabled={!canReview || reviewing}
       className={`rounded-lg text-xs font-bold uppercase tracking-wide transition hover:brightness-110 disabled:opacity-40 ${className}`}
-      style={{ backgroundColor: "rgba(255,255,255,0.1)", color: theme.surfaceText }}
+      style={{ backgroundColor: theme.overlay, color: theme.surfaceText }}
     >
       {reviewing ? "Analysing…" : "Review"}
     </button>
@@ -125,7 +125,7 @@ export default function MatchPanel({
       disabled={!canAnalyse}
       title="Open this game on the analysis board"
       className={`rounded-lg text-xs font-bold uppercase tracking-wide transition hover:brightness-110 disabled:opacity-40 ${className}`}
-      style={{ backgroundColor: "rgba(255,255,255,0.1)", color: theme.surfaceText }}
+      style={{ backgroundColor: theme.overlay, color: theme.surfaceText }}
     >
       Analyse from here
     </button>
@@ -215,7 +215,7 @@ export default function MatchPanel({
               disabled={!botControlsActive}
               onChange={(event) => onLevelChange(Number(event.target.value))}
               className="h-8 w-32 rounded-lg px-2 text-xs font-bold"
-              style={{ backgroundColor: "rgba(255,255,255,0.1)", color: theme.surfaceText }}
+              style={{ backgroundColor: theme.overlay, color: theme.surfaceText }}
             >
               {levels.map((option) => (
                 <option key={option.level} value={option.level}>
@@ -277,7 +277,7 @@ export default function MatchPanel({
                   disabled={!engineControlsActive}
                   onChange={(event) => onEngineLevelChange(color, Number(event.target.value))}
                   className="h-8 w-28 rounded-lg px-2 text-xs font-bold"
-                  style={{ backgroundColor: "rgba(255,255,255,0.1)", color: theme.surfaceText }}
+                  style={{ backgroundColor: theme.overlay, color: theme.surfaceText }}
                 >
                   {levels.map((option) => (
                     <option key={option.level} value={option.level}>
@@ -314,7 +314,7 @@ export default function MatchPanel({
                   type="button"
                   onClick={onTogglePause}
                   className="h-8 flex-1 rounded-lg text-[11px] font-bold uppercase tracking-wide transition hover:brightness-110"
-                  style={{ backgroundColor: "rgba(255,255,255,0.1)", color: theme.surfaceText }}
+                  style={{ backgroundColor: theme.overlay, color: theme.surfaceText }}
                 >
                   {paused ? "Resume" : "Pause"}
                 </button>
@@ -324,7 +324,7 @@ export default function MatchPanel({
                   disabled={!paused}
                   title="Play a single move"
                   className="h-8 flex-1 rounded-lg text-[11px] font-bold uppercase tracking-wide transition hover:brightness-110 disabled:opacity-40"
-                  style={{ backgroundColor: "rgba(255,255,255,0.1)", color: theme.surfaceText }}
+                  style={{ backgroundColor: theme.overlay, color: theme.surfaceText }}
                 >
                   Step
                 </button>
@@ -341,7 +341,7 @@ export default function MatchPanel({
 
         <div
           className="w-full border-t pt-3 md:mt-auto"
-          style={{ borderColor: "rgba(255,255,255,0.12)" }}
+          style={{ borderColor: theme.overlay }}
         >
           <h2 className="mb-1.5 text-xs font-black uppercase tracking-wide opacity-60">Board</h2>
           <ThemePicker theme={theme} onSelect={onThemeSelect} />

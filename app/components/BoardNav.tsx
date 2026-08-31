@@ -47,7 +47,7 @@ export default function BoardNav({
           onClick={button.onClick}
           disabled={!button.enabled}
           className="h-8 flex-1 rounded text-sm font-bold transition hover:brightness-125 disabled:opacity-30"
-          style={{ backgroundColor: "rgba(255,255,255,0.1)" }}
+          style={{ backgroundColor: theme.overlay }}
         >
           {button.label}
         </button>
@@ -61,7 +61,7 @@ export default function BoardNav({
           title="Back to the live position"
           className="h-8 rounded px-2 text-[10px] font-black uppercase tracking-wide transition hover:brightness-110 disabled:opacity-30"
           style={{
-            backgroundColor: atLive ? "rgba(255,255,255,0.1)" : theme.accent,
+            backgroundColor: atLive ? theme.overlay : theme.accent,
             color: atLive ? theme.surfaceText : theme.backdrop,
           }}
         >

@@ -98,7 +98,7 @@ export default function MoveTreeList({
           variation ? "text-[11px]" : "text-xs font-semibold"
         }`}
         style={{
-          backgroundColor: isCursor ? "rgba(255,255,255,0.2)" : "transparent",
+          backgroundColor: isCursor ? theme.overlayStrong : "transparent",
           opacity: variation && !isCursor ? 0.75 : 1,
         }}
         aria-current={isCursor ? "true" : undefined}
@@ -133,7 +133,7 @@ export default function MoveTreeList({
           <div
             key={`variation-${variation[0].nodeId}`}
             className="my-0.5 flex w-full flex-wrap items-baseline gap-x-0.5 border-l pl-1.5"
-            style={{ borderColor: "rgba(255,255,255,0.25)", marginLeft: depth * 4 }}
+            style={{ borderColor: theme.overlayStrong, marginLeft: depth * 4 }}
           >
             {renderLine(variation, depth + 1)}
           </div>,

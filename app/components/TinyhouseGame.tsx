@@ -776,7 +776,7 @@ export default function TinyhouseGame() {
             type="button"
             onClick={() => setRestored(null)}
             className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide"
-            style={{ backgroundColor: "rgba(255,255,255,0.12)" }}
+            style={{ backgroundColor: theme.overlay }}
           >
             Keep
           </button>
@@ -969,7 +969,7 @@ export default function TinyhouseGame() {
                         type="button"
                         onClick={() => openAnalysis(game.history.length)}
                         className="rounded-full px-4 py-1.5 text-xs font-bold uppercase tracking-wide"
-                        style={{ backgroundColor: "rgba(255,255,255,0.15)" }}
+                        style={{ backgroundColor: theme.overlayStrong }}
                       >
                         Analyse
                       </button>
@@ -1111,7 +1111,7 @@ export default function TinyhouseGame() {
                 />
               </div>
 
-              <div className="border-t pt-2" style={{ borderColor: "rgba(255,255,255,0.12)" }}>
+              <div className="border-t pt-2" style={{ borderColor: theme.overlay }}>
                 <h2 className="mb-1 text-xs font-bold uppercase tracking-wide opacity-70">Pieces</h2>
                 <ul className="flex flex-col gap-1.5 text-xs leading-tight">
                   {PIECE_LEGEND.map((item) => (
