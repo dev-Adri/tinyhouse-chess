@@ -167,7 +167,7 @@ export const THEMES: BoardTheme[] = [
     selected: "#f0c14b",
     lastMove: "#dcd08a",
     target: "#5f9e5f",
-    accent: "#c2762c",
+    accent: "#ba712a",
   },
   {
     id: "sandstone",
@@ -187,7 +187,7 @@ export const THEMES: BoardTheme[] = [
     selected: "#e8a13c",
     lastMove: "#e0c184",
     target: "#5d8f4f",
-    accent: "#c9752a",
+    accent: "#bb6d27",
   },
   {
     id: "ice",

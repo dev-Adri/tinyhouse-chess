@@ -77,8 +77,12 @@ export default function ThemePicker({ theme, onSelect }: ThemePickerProps) {
     );
     if (options.length === 0) return;
     const currentIndex = options.findIndex((option) => option === document.activeElement);
-    const delta = event.key === "ArrowDown" ? 1 : -1;
-    const nextIndex = (currentIndex + delta + options.length) % options.length;
+    const nextIndex =
+      currentIndex === -1
+        ? event.key === "ArrowDown"
+          ? 0
+          : options.length - 1
+        : (currentIndex + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
     options[nextIndex]?.focus();
   };
 
