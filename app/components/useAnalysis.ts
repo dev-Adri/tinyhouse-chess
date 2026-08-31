@@ -177,10 +177,18 @@ export function useAnalysis(
   const haveParent = parentId === null || Boolean(evals[parentId]);
 
   /**
-   * Searches in flight, one controller each, keyed by depth and node — the
-   * cursor's result landing must not cancel the parent's search, which is
-   * still wanted and expensive to repeat. Stale keys (a different node, a
-   * different depth) are aborted by the effect below on its next run.
+   * Searches in flight, one controller each, keyed by depth, root position and
+   * node — the cursor's result landing must not cancel the parent's search,
+   * which is still wanted and expensive to repeat. Stale keys are aborted by
+   * the effect below on its next run.
+   *
+   * The root position is part of the key because node ids are only unique
+   * within a tree: `createTree` always names the root "0", so a search on the
+   * old tree's root would otherwise look like a search on the new one's and
+   * survive `load`, writing the previous position's evaluation into the fresh
+   * cache. `startFen` discriminates exactly the trees that differ, and merges
+   * only the case where the two roots hold the same position — where the
+   * evaluation genuinely still applies.
    */
   const inFlight = useRef(new Map<string, AbortController>());
 
@@ -192,6 +200,12 @@ export function useAnalysis(
     }
   }, []);
 
+  /** The one place a search key is built, so the three uses cannot drift. */
+  const searchKey = useCallback(
+    (nodeId: string) => `${depth}:${startFen ?? ""}:${nodeId}`,
+    [depth, startFen],
+  );
+
   // Nothing outlives the hook.
   useEffect(() => {
     const searches = inFlight.current;
@@ -202,12 +216,11 @@ export function useAnalysis(
   }, []);
 
   useEffect(() => {
-    // Navigating away, changing depth or leaving analysis abandons searches
-    // for positions no longer on the board — and only those.
-    const key = (id: string) => `${depth}:${id}`;
+    // Navigating away, changing depth, replacing the tree or leaving analysis
+    // abandons searches for positions no longer on the board — and only those.
     const keep =
       enabled && !outcome.over
-        ? new Set([cursor, parentId].filter((id): id is string => id !== null).map(key))
+        ? new Set([cursor, parentId].filter((id): id is string => id !== null).map(searchKey))
         : new Set<string>();
     abortSearches(keep);
 
@@ -228,11 +241,12 @@ export function useAnalysis(
       if (!haveParent && parentId) wanted.push({ id: parentId, path: uciPath.slice(0, -1) });
 
       for (const { id, path } of wanted) {
-        if (inFlight.current.has(key(id))) continue;
+        if (inFlight.current.has(searchKey(id))) continue;
         const controller = new AbortController();
-        inFlight.current.set(key(id), controller);
+        inFlight.current.set(searchKey(id), controller);
         const settle = () => {
-          if (inFlight.current.get(key(id)) === controller) inFlight.current.delete(key(id));
+          const key = searchKey(id);
+          if (inFlight.current.get(key) === controller) inFlight.current.delete(key);
         };
         fetchAnalysis(path, { fen: startFen, depth }, controller.signal)
           .then((result) => {
@@ -259,6 +273,7 @@ export function useAnalysis(
     };
   }, [
     abortSearches,
+    searchKey,
     enabled,
     cursor,
     parentId,

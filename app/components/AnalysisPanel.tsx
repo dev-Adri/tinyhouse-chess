@@ -140,7 +140,7 @@ export default function AnalysisPanel({
                 className="h-5 w-5 xl:h-6 xl:w-6"
               />
             ) : (
-              <span className="h-5 w-5 rounded-full xl:h-6 xl:w-6" style={{ backgroundColor: theme.overlay }} />
+              <span className="h-5 w-5 rounded-full xl:h-6 xl:w-6" style={{ backgroundColor: theme.overlayStrong }} />
             )}
             <span className="font-bold">{label}</span>
             <span className="opacity-70">
