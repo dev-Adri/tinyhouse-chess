@@ -3,13 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "start": "node scripts/dev.mjs",
-    "start:prod": "node scripts/dev.mjs --build",
+    "start": "./dev.sh",
+    "start:prod": "./dev.sh --prod",
     "dev": "next dev",
+    "next:start": "next start",
     "build": "next build",
-    "serve": "next start",
-    "web": "node scripts/dev.mjs --no-engine",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "vitest run"
   },
   "dependencies": {
     "next": "16.3.3",
@@ -24,6 +24,19 @@
     "eslint": "^9",
     "eslint-config-next": "16.3.3",
     "tailwindcss": "^4",
-    "typescript": "^5"
-  }
+    "typescript": "^5",
+    "vitest": "^4.1.11"
+  },
+  "description": "A playable browser version of **Tinyhouse** — chess.com's 4×4 variant with crazyhouse-style piece drops — plus a Python engine that plays it and reviews your games.",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dev-Adri/tinyhouse-chess.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/dev-Adri/tinyhouse-chess/issues"
+  },
+  "homepage": "https://github.com/dev-Adri/tinyhouse-chess#readme"
 }

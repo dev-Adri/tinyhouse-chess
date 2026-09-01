@@ -8,6 +8,8 @@ import {
   findKing,
   getOutcome,
   legalMoves,
+  movesEqual,
+  toFen,
   type Color,
   type GameState,
   type Move,
@@ -15,18 +17,38 @@ import {
 } from "@/app/lib/tinyhouse/engine";
 import { moveFromUci, moveToUci } from "@/app/lib/tinyhouse/uci";
 import { DEFAULT_THEME_ID, getTheme } from "@/app/lib/tinyhouse/themes";
+import {
+  DEFAULT_DEPTH,
+  THEME_STORAGE_KEY,
+  clampDepth,
+  clearStored,
+  loadAnalysis,
+  loadDepths,
+  loadGame,
+  saveAnalysis,
+  saveDepths,
+  saveGame,
+} from "@/app/lib/tinyhouse/storage";
+import { createTree, mainLine, positionAt, treeFromHistory } from "@/app/lib/tinyhouse/variations";
 import { fetchBestMove, fetchReview } from "@/app/lib/engine/client";
+import { toWhiteRelative } from "@/app/lib/engine/classification";
 import type { EngineLevel, GameReview } from "@/app/lib/engine/types";
+import AnalysisPanel from "./AnalysisPanel";
 import Board, { type BoardArrow } from "./Board";
+import BoardNav from "./BoardNav";
 import EvalBar from "./EvalBar";
 import MatchPanel, { type OpponentMode } from "./MatchPanel";
+import MoveTreeList from "./MoveTreeList";
 import PieceIcon from "./PieceIcon";
 import PromotionDialog from "./PromotionDialog";
 import ReserveBank from "./ReserveBank";
 import ReviewPanel from "./ReviewPanel";
-import { sameSelection, type Selection } from "./types";
-
-const THEME_STORAGE_KEY = "tinyhouse:theme";
+import SetupPanel from "./SetupPanel";
+import { useAnalysis } from "./useAnalysis";
+import { useBoardInteraction } from "./useBoardInteraction";
+import { useMoveSound } from "./useMoveSound";
+import { useSetup } from "./useSetup";
+import { readMuted, writeMuted } from "@/app/lib/tinyhouse/sound";
 
 /** Mirrors the levels the Python engine exposes; refreshed from /health. */
 const FALLBACK_LEVELS: EngineLevel[] = [
@@ -38,14 +60,7 @@ const FALLBACK_LEVELS: EngineLevel[] = [
   { level: 6, name: "Master", depth: 24, timeMs: 3500 },
 ];
 
-interface DragState {
-  origin: Selection;
-  piece: Piece;
-  x: number;
-  y: number;
-  moved: boolean;
-  size: number;
-}
+const EMPTY_TARGETS: Set<number> = new Set();
 
 const PIECE_LEGEND: { type: Piece["type"]; text: string }[] = [
   { type: "K", text: "one step in any direction" },
@@ -71,9 +86,6 @@ function readStoredTheme() {
 
 export default function TinyhouseGame() {
   const [game, setGame] = useState(createGame);
-  const [selection, setSelection] = useState<Selection | null>(null);
-  const [drag, setDrag] = useState<DragState | null>(null);
-  const [promotion, setPromotion] = useState<{ square: number; options: Move[] } | null>(null);
   const [chosenTheme, setChosenTheme] = useState<string | null>(null);
   const boardRef = useRef<HTMLDivElement | null>(null);
 
@@ -82,17 +94,58 @@ export default function TinyhouseGame() {
   const [mode, setMode] = useState<OpponentMode>("human");
   const [level, setLevel] = useState(3);
   const [humanSide, setHumanSide] = useState<Color>("w");
+  /** Machine-versus-machine: a level per side, a pacing floor, and playback. */
+  const [engineLevels, setEngineLevels] = useState<Record<Color, number>>({ w: 3, b: 3 });
+  const [moveDelayMs, setMoveDelayMs] = useState(1000);
+  const [paused, setPaused] = useState(false);
+  /** Moves the machines may play while paused; Step sets it to one. */
+  const [steps, setSteps] = useState(0);
   const [levels, setLevels] = useState<EngineLevel[]>(FALLBACK_LEVELS);
   const [engineError, setEngineError] = useState<string | null>(null);
   /** Bumped by the retry button so the bot effect runs again after a failure. */
   const [retryToken, setRetryToken] = useState(0);
-
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** Analysis has no fixed orientation, so it gets a manual flip. */
+  const [flipBoard, setFlipBoard] = useState(false);
+  /** Sound is on by default; the choice is remembered across sessions. */
+  const [muted, setMuted] = useState(false);
+  /** Search depth, kept separately per surface: deep review, fast analysis. */
+  const [analysisDepth, setAnalysisDepth] = useState(DEFAULT_DEPTH);
+  const [reviewDepth, setReviewDepth] = useState(DEFAULT_DEPTH);
 
   // Review
   const [review, setReview] = useState<GameReview | null>(null);
   const [reviewing, setReviewing] = useState(false);
-  const [reviewPosition, setReviewPosition] = useState(0);
+  /** Where "Back to review" returns to; null when analysis was entered directly. */
+  const [returnMode, setReturnMode] = useState<OpponentMode | null>(null);
+
+  /**
+   * How far into the live game the board is showing: 0 is the starting
+   * position, history.length is the position actually being played. Doubles as
+   * the review cursor, so there is only ever one place to look.
+   *
+   * The ply is stored together with the history length it was chosen against.
+   * When a move lands — the player's or the bot's — the lengths stop matching
+   * and the view falls back to the live position, so looking back never hides
+   * what just happened.
+   */
+  const [view, setView] = useState({ at: 0, of: 0 });
+
+  /** Move count of a game picked back up from storage, for the notice. */
+  const [restored, setRestored] = useState<number | null>(null);
+  const hydrated = useRef(false);
+
+  const analysisMode = mode === "analysis";
+  const analysis = useAnalysis(analysisMode, { depth: analysisDepth, review });
+
+  /**
+   * The analysis tab opens on the position editor: pieces go anywhere, in any
+   * number, either colour, with no turn order. Pressing Analyse hands the
+   * result to the tree, and from then on only legal moves are playable.
+   */
+  const [editing, setEditing] = useState(false);
+  const setup = useSetup();
+  const setupMode = analysisMode && editing;
 
   const storedTheme = useSyncExternalStore(
     subscribeToStoredTheme,
@@ -110,14 +163,21 @@ export default function TinyhouseGame() {
     }
   }, []);
 
-  const botSide: Color = humanSide === "w" ? "b" : "w";
-  const inReview = review !== null;
+  const toggleMuted = useCallback(() => {
+    setMuted((current) => {
+      writeMuted(!current);
+      return !current;
+    });
+  }, []);
 
-  const moves = useMemo(() => legalMoves(game), [game]);
-  const outcome = useMemo(() => getOutcome(game, moves), [game, moves]);
+  // --- the live game ---------------------------------------------------------
+
+  const botSide: Color = humanSide === "w" ? "b" : "w";
+  const liveMoves = useMemo(() => legalMoves(game), [game]);
+  const outcome = useMemo(() => getOutcome(game, liveMoves), [game, liveMoves]);
   const uciMoves = useMemo(() => game.history.map((entry) => moveToUci(entry.move)), [game.history]);
 
-  /** Every position of the game, for stepping through a review. */
+  /** Every position of the game, for stepping back through it. */
   const positions = useMemo(() => {
     const list: GameState[] = [createGame()];
     let current = list[0];
@@ -128,177 +188,224 @@ export default function TinyhouseGame() {
     return list;
   }, [game.history]);
 
-  const displayed = inReview ? (positions[reviewPosition] ?? game) : game;
-  const displayedOutcome = inReview ? getOutcome(displayed) : outcome;
+  const viewPly = view.of === game.history.length ? view.at : game.history.length;
+  const setViewPly = useCallback(
+    (ply: number) => setView({ at: ply, of: game.history.length }),
+    [game.history.length],
+  );
+
+  const inReview = review !== null && !analysisMode;
+  const rewound = viewPly < game.history.length;
+  const displayedLive = positions[viewPly] ?? game;
 
   const botToMove = started && mode === "bot" && game.turn === botSide && !outcome.over;
-  /** A request is in flight for exactly as long as it is the bot's turn. */
-  const thinking = botToMove && !engineError && promotion === null && !inReview;
-  const locked = !started || outcome.over || promotion !== null || inReview || botToMove;
 
-  const movesForOrigin = useCallback(
-    (origin: Selection) =>
-      moves.filter((move) =>
-        origin.kind === "square"
-          ? move.kind === "move" && move.from === origin.square
-          : move.kind === "drop" && move.piece === origin.piece,
-      ),
-    [moves],
+  const enginesMode = mode === "engines";
+  /** True while the machines are free to move: paused holds them, Step lets one through. */
+  const enginesRunning = enginesMode && started && !outcome.over && (!paused || steps > 0);
+
+  // --- what the player can act on -------------------------------------------
+
+  const rewoundMoves = useMemo(
+    () => (rewound ? legalMoves(displayedLive) : []),
+    [rewound, displayedLive],
   );
 
-  const selectionMoves = useMemo(
-    () => (selection ? movesForOrigin(selection) : []),
-    [selection, movesForOrigin],
-  );
-  const targets = useMemo(() => new Set(selectionMoves.map((m) => m.to)), [selectionMoves]);
+  const active = analysisMode ? analysis.state : rewound ? displayedLive : game;
+  const activeMoves = analysisMode ? analysis.moves : rewound ? rewoundMoves : liveMoves;
 
-  const checkSquare = displayedOutcome.inCheck ? findKing(displayed.board, displayed.turn) : null;
+  /**
+   * Reviewing, or looking at a finished game, a move is not a continuation but
+   * a question: what if this had been played instead? Those moves open the
+   * analysis board branching from the position on screen, with the game as
+   * played kept as the main line.
+   *
+   * While a game is still running the rewound board stays read-only — a move
+   * there would be ambiguous about whether it counted.
+   */
+  const branching = !analysisMode && (inReview || outcome.over);
 
-  const commit = useCallback((candidates: Move[]) => {
-    if (candidates.length === 0) return false;
-    if (candidates.length > 1) {
-      // Only promotions produce several moves to the same square.
-      setPromotion({ square: candidates[0].to, options: candidates });
-      return true;
-    }
-    setGame((current) => applyMove(current, candidates[0]));
-    setSelection(null);
-    return true;
-  }, []);
+  const locked =
+    !analysisMode && !branching && (enginesMode || !started || botToMove || rewound);
 
-  const pieceForOrigin = useCallback(
-    (origin: Selection): Piece | null => {
-      if (origin.kind === "square") {
-        const piece = game.board[origin.square];
-        return piece && piece.color === game.turn ? piece : null;
-      }
-      return game.reserves[game.turn][origin.piece] > 0
-        ? { type: origin.piece, color: game.turn }
-        : null;
+  /** Hands the played game to the analysis board, optionally playing one move. */
+  const openAnalysis = useCallback(
+    (ply: number, firstMove?: Move) => {
+      const tree = treeFromHistory(game.history);
+      const line = mainLine(tree);
+      const cursor = line[Math.max(0, Math.min(ply, line.length - 1))];
+      analysis.load(tree, cursor, firstMove);
+      // The report is kept rather than cleared: `inReview` already yields to
+      // analysis mode, and holding it means going back costs nothing later.
+      // Entering analysis from analysis must not forget the original mode.
+      setReturnMode((current) => (mode === "analysis" ? current : mode));
+      setEditing(false);
+      setMode("analysis");
+      setStarted(true);
+      setSettingsOpen(false);
     },
-    [game],
+    [game.history, analysis, mode],
   );
 
-  /** Click / keyboard activation, without dragging. */
-  const activate = useCallback(
-    (origin: Selection) => {
-      if (locked) return;
-      if (origin.kind === "square" && selection && targets.has(origin.square)) {
-        commit(selectionMoves.filter((move) => move.to === origin.square));
+  const handleMove = useCallback(
+    (move: Move) => {
+      if (analysisMode) {
+        analysis.play(move);
         return;
       }
-      const piece = pieceForOrigin(origin);
-      if (!piece || movesForOrigin(origin).length === 0) {
-        setSelection(null);
+      if (branching) {
+        openAnalysis(viewPly, move);
         return;
       }
-      setSelection(sameSelection(selection, origin) ? null : origin);
+      setGame((current) => applyMove(current, move));
     },
-    [locked, selection, targets, selectionMoves, commit, pieceForOrigin, movesForOrigin],
+    [analysisMode, analysis, branching, openAnalysis, viewPly],
   );
 
-  const handlePointerDown = useCallback(
-    (event: React.PointerEvent, origin: Selection) => {
-      if (locked || event.button !== 0) return;
+  const interaction = useBoardInteraction({
+    state: active,
+    moves: activeMoves,
+    locked,
+    boardRef,
+    onMove: handleMove,
+  });
 
-      // Dropping onto a highlighted destination plays the move immediately.
-      if (origin.kind === "square" && selection && targets.has(origin.square)) {
-        commit(selectionMoves.filter((move) => move.to === origin.square));
-        return;
-      }
+  /**
+   * The colour the engine is to move for, or null when no engine should be
+   * thinking. One value covers both machine modes, so there is a single place
+   * where "is it the computer's turn" is decided.
+   */
+  const engineTurn: Color | null =
+    interaction.promotion || inReview
+      ? null
+      : botToMove
+        ? game.turn
+        : enginesRunning
+          ? game.turn
+          : null;
 
-      const piece = pieceForOrigin(origin);
-      const originMoves = piece ? movesForOrigin(origin) : [];
-      if (!piece || originMoves.length === 0) {
-        setSelection(null);
-        return;
-      }
-
-      const wasSelected = sameSelection(selection, origin);
-      setSelection(origin);
-
-      const rect = boardRef.current?.getBoundingClientRect();
-      const size = rect ? rect.width / 4 : 72;
-      const startX = event.clientX;
-      const startY = event.clientY;
-      setDrag({ origin, piece, x: startX, y: startY, moved: false, size });
-
-      let moved = false;
-      const onMove = (moveEvent: PointerEvent) => {
-        if (!moved && Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) > 6) {
-          moved = true;
-        }
-        setDrag((current) =>
-          current ? { ...current, x: moveEvent.clientX, y: moveEvent.clientY, moved } : current,
-        );
-      };
-      const cleanup = () => {
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
-        window.removeEventListener("pointercancel", onCancel);
-      };
-      const onUp = (upEvent: PointerEvent) => {
-        cleanup();
-        setDrag(null);
-        const element = document.elementFromPoint(upEvent.clientX, upEvent.clientY);
-        const squareEl = element?.closest("[data-square]");
-        const to = squareEl ? Number(squareEl.getAttribute("data-square")) : -1;
-        const candidates = originMoves.filter((move) => move.to === to);
-        if (candidates.length > 0) {
-          commit(candidates);
-          return;
-        }
-        // A plain click keeps the piece selected; re-clicking it clears it.
-        if (moved || wasSelected) setSelection(null);
-      };
-      const onCancel = () => {
-        cleanup();
-        setDrag(null);
-      };
-
-      window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp);
-      window.addEventListener("pointercancel", onCancel);
-    },
-    [locked, selection, targets, selectionMoves, commit, pieceForOrigin, movesForOrigin],
-  );
+  /** A request is in flight for exactly as long as a machine is to move. */
+  const thinking = engineTurn !== null && !engineError;
 
   const resetBoard = useCallback(() => {
     setGame(createGame());
-    setSelection(null);
-    setPromotion(null);
-    setDrag(null);
     setReview(null);
-    setReviewPosition(0);
     setEngineError(null);
-  }, []);
+    interaction.clear();
+  }, [interaction]);
 
   /** Begin a match with the settings currently chosen. */
   const startMatch = useCallback(() => {
     resetBoard();
+    setPaused(false);
+    setSteps(0);
+    if (mode === "analysis") {
+      analysis.reset();
+      setup.reset();
+      setEditing(true);
+    }
     setStarted(true);
-  }, [resetBoard]);
+  }, [resetBoard, mode, analysis, setup]);
 
   /** Back to the setup screen, where the settings can be changed again. */
   const newMatch = useCallback(() => {
     resetBoard();
+    analysis.reset();
     setStarted(false);
-  }, [resetBoard]);
+    setRestored(null);
+    clearStored("game");
+    clearStored("analysis");
+  }, [resetBoard, analysis]);
 
-  // --- engine: the bot's move ------------------------------------------------
+  // --- persistence -----------------------------------------------------------
+
+  // Restoring has to happen after mount and has to write state: localStorage
+  // does not exist while rendering on the server, so reading it during render
+  // would make the first client render disagree with the server's. It runs
+  // once, before anything is on screen, so there is no cascade to speak of.
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    setMuted(readMuted());
+    const depths = loadDepths();
+    setAnalysisDepth(depths.analysis);
+    setReviewDepth(depths.review);
+    const storedAnalysis = loadAnalysis();
+    // A hand-built start position is worth restoring even before a move is
+    // played on it — otherwise arranging a board and refreshing loses it.
+    const hasAnalysis =
+      storedAnalysis !== null &&
+      (storedAnalysis.tree.nodes[storedAnalysis.tree.root].children.length > 0 ||
+        toFen(storedAnalysis.tree.start) !== toFen(createGame()));
+    if (hasAnalysis) {
+      analysis.load(storedAnalysis!.tree, storedAnalysis!.cursor);
+    }
+
+    const stored = loadGame();
+    if (stored && (stored.started || stored.game.history.length > 0)) {
+      setGame(stored.game);
+      setMode(stored.mode);
+      setLevel(stored.level);
+      setHumanSide(stored.humanSide);
+      setStarted(stored.started);
+      // A restored machine game waits for a deliberate Resume rather than
+      // firing off a search the moment the page loads.
+      if (stored.mode === "engines") setPaused(true);
+      setRestored(stored.game.history.length);
+      if (stored.mode === "analysis" && !hasAnalysis) setEditing(true);
+    }
+    hydrated.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
-    if (mode !== "bot" || !botToMove || promotion || inReview) return;
+    if (!hydrated.current) return;
+    if (!started && game.history.length === 0) return;
+    const timer = setTimeout(() => saveGame({ game, mode, level, humanSide, started }), 300);
+    return () => clearTimeout(timer);
+  }, [game, mode, level, humanSide, started]);
+
+  useEffect(() => {
+    if (!hydrated.current) return;
+    const timer = setTimeout(() => saveAnalysis(analysis.tree, analysis.cursor), 300);
+    return () => clearTimeout(timer);
+  }, [analysis.tree, analysis.cursor]);
+
+  useEffect(() => {
+    if (!hydrated.current) return;
+    saveDepths({ analysis: analysisDepth, review: reviewDepth });
+  }, [analysisDepth, reviewDepth]);
+
+  // --- engine: the machine's move -------------------------------------------
+
+  // One effect drives both machine modes. In `engines` mode the reply is held
+  // until `moveDelayMs` has passed since the request went out, so the delay is
+  // a floor on the interval between moves rather than an addition to the
+  // engine's own thinking time.
+  useEffect(() => {
+    if (engineTurn === null) return;
 
     const controller = new AbortController();
+    const requestedAt = Date.now();
+    const askedLevel = enginesMode ? engineLevels[engineTurn] : level;
+    const delay = enginesMode ? moveDelayMs : 0;
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-    fetchBestMove(uciMoves, level, controller.signal)
+    fetchBestMove(uciMoves, askedLevel, { seed: Math.floor(Math.random() * 2 ** 31) }, controller.signal)
       .then((response) => {
         if (cancelled) return;
         const move = moveFromUci(response.move);
-        // Guard against a stale reply landing on a position that moved on.
-        setGame((current) => (current === game ? applyMove(current, move) : current));
+        timer = setTimeout(
+          () => {
+            if (cancelled) return;
+            // Guard against a stale reply landing on a position that moved on.
+            setGame((current) => (current === game ? applyMove(current, move) : current));
+            // A stepped move is spent once it has been played.
+            if (enginesMode && paused) setSteps((current) => Math.max(0, current - 1));
+          },
+          Math.max(0, delay - (Date.now() - requestedAt)),
+        );
       })
       .catch((error: Error) => {
         if (!cancelled && error.name !== "AbortError") setEngineError(error.message);
@@ -306,49 +413,97 @@ export default function TinyhouseGame() {
 
     return () => {
       cancelled = true;
+      if (timer) clearTimeout(timer);
       controller.abort();
     };
-  }, [mode, botToMove, promotion, inReview, uciMoves, level, game, retryToken]);
+  }, [
+    engineTurn,
+    enginesMode,
+    engineLevels,
+    moveDelayMs,
+    paused,
+    uciMoves,
+    level,
+    game,
+    retryToken,
+  ]);
+
+  // Watching from a rewound board would fight the live game for the display.
+  useEffect(() => {
+    /* eslint-disable-next-line react-hooks/set-state-in-effect */
+    if (enginesMode && rewound) setPaused(true);
+  }, [enginesMode, rewound]);
 
   // --- engine: the game review ----------------------------------------------
 
-  const startReview = useCallback(async () => {
-    if (!uciMoves.length || reviewing) return;
-    setReviewing(true);
-    setEngineError(null);
-    try {
-      const report = await fetchReview(uciMoves);
-      setReview(report);
-      setReviewPosition(report.plies.length);
-      setSelection(null);
-    } catch (error) {
-      setEngineError((error as Error).message);
-    } finally {
-      setReviewing(false);
-    }
-  }, [uciMoves, reviewing]);
+  const startReview = useCallback(
+    async (depth: number = reviewDepth) => {
+      if (!uciMoves.length || reviewing) return;
+      setReviewing(true);
+      setEngineError(null);
+      try {
+        const report = await fetchReview(uciMoves, { depth });
+        setReview(report);
+        setViewPly(report.plies.length);
+        interaction.clear();
+      } catch (error) {
+        setEngineError((error as Error).message);
+      } finally {
+        setReviewing(false);
+      }
+    },
+    [uciMoves, reviewing, interaction, setViewPly, reviewDepth],
+  );
+
+  /** Changing the review depth re-runs it: the grades are depth-dependent. */
+  const changeReviewDepth = useCallback(
+    (depth: number) => {
+      const next = clampDepth(depth);
+      setReviewDepth(next);
+      if (review) void startReview(next);
+    },
+    [review, startReview],
+  );
 
   const closeReview = useCallback(() => {
     setReview(null);
-    setReviewPosition(0);
-  }, []);
+    setViewPly(game.history.length);
+  }, [game.history.length, setViewPly]);
+
+  // --- navigation ------------------------------------------------------------
+
+  const lastPly = inReview && review ? review.plies.length : game.history.length;
+  const stepBack = useCallback(
+    () => setViewPly(Math.max(0, viewPly - 1)),
+    [viewPly, setViewPly],
+  );
+  const stepForward = useCallback(
+    () => setViewPly(Math.min(lastPly, viewPly + 1)),
+    [viewPly, lastPly, setViewPly],
+  );
+  const toStart = useCallback(() => setViewPly(0), [setViewPly]);
+  const toLive = useCallback(() => setViewPly(lastPly), [lastPly, setViewPly]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setSelection(null);
-        setPromotion(null);
+        interaction.clear();
+        return;
       }
-      if (!review) return;
-      if (event.key === "ArrowLeft") {
-        setReviewPosition((current) => Math.max(0, current - 1));
-      } else if (event.key === "ArrowRight") {
-        setReviewPosition((current) => Math.min(review.plies.length, current + 1));
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      if (setupMode) return;
+      const back = event.key === "ArrowLeft";
+      if (analysisMode) {
+        if (back) analysis.back();
+        else analysis.forward();
+        return;
       }
+      if (back) stepBack();
+      else stepForward();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [review]);
+  }, [analysisMode, setupMode, analysis, stepBack, stepForward, interaction]);
 
   // Difficulty levels come from the engine when it is reachable.
   useEffect(() => {
@@ -362,11 +517,47 @@ export default function TinyhouseGame() {
     return () => controller.abort();
   }, []);
 
+  // --- the live game as a tree, so one move list serves both boards ---------
+
+  const liveTree = useMemo(() => treeFromHistory(game.history), [game.history]);
+  const liveLine = useMemo(() => mainLine(liveTree), [liveTree]);
+  const liveCursor = liveLine[Math.min(viewPly, liveLine.length - 1)] ?? liveTree.root;
+  const selectLivePly = useCallback(
+    (nodeId: string) => {
+      const index = liveLine.indexOf(nodeId);
+      if (index >= 0) setViewPly(index);
+    },
+    [liveLine, setViewPly],
+  );
+
   // --- presentation ----------------------------------------------------------
 
-  const turnName = game.turn === "w" ? "White" : "Black";
+  const displayed = analysisMode ? analysis.state : displayedLive;
+
+  // The move the board is currently showing, which is what should sound.
+  const displayedSan = analysisMode
+    ? (analysis.tree.nodes[analysis.cursor]?.san || null)
+    : (displayedLive.history[displayedLive.history.length - 1]?.san ?? null);
+
+  useMoveSound({
+    san: displayedSan,
+    key: analysisMode ? `analysis:${analysis.cursor}` : `live:${viewPly}`,
+    muted,
+  });
+
+  const displayedOutcome = useMemo(() => {
+    if (analysisMode) return analysis.outcome;
+    if (rewound || inReview) return getOutcome(displayedLive);
+    return outcome;
+  }, [analysisMode, analysis.outcome, rewound, inReview, displayedLive, outcome]);
+
+  const turnName = active.turn === "w" ? "White" : "Black";
   let status: string;
-  if (outcome.over && outcome.reason === "checkmate") {
+  if (setupMode) {
+    status = "Arrange the position";
+  } else if (analysisMode) {
+    status = analysis.outcome.over ? "Line ends here" : `${turnName} to move`;
+  } else if (outcome.over && outcome.reason === "checkmate") {
     status = `Checkmate — ${outcome.winner === "w" ? "White" : "Black"} wins`;
   } else if (outcome.over && outcome.reason === "stalemate") {
     status = "Stalemate — draw";
@@ -376,47 +567,143 @@ export default function TinyhouseGame() {
     status = "Draw — move limit reached";
   } else if (thinking) {
     status = "Bot is thinking…";
+  } else if (rewound) {
+    status = `Move ${viewPly} of ${game.history.length}`;
   } else {
     status = outcome.inCheck ? `${turnName} is in check` : `${turnName} to move`;
   }
 
-  const historyRows = useMemo(() => {
-    const rows: { number: number; white?: string; black?: string }[] = [];
-    game.history.forEach((entry, i) => {
-      const row = Math.floor(i / 2);
-      rows[row] ??= { number: row + 1 };
-      if (entry.color === "w") rows[row].white = entry.san;
-      else rows[row].black = entry.san;
-    });
-    return rows;
-  }, [game.history]);
-
   // Review overlays: the engine's suggestion here, and how the last move rated.
-  const reviewPly = review?.plies[reviewPosition] ?? null;
-  const previousPly = review && reviewPosition > 0 ? review.plies[reviewPosition - 1] : null;
+  const reviewPly = review?.plies[viewPly] ?? null;
+  const previousPly = review && viewPly > 0 ? review.plies[viewPly - 1] : null;
+
   const arrow: BoardArrow | null = useMemo(() => {
-    if (!reviewPly) return null;
-    const best = moveFromUci(reviewPly.best_uci);
+    const uci = analysisMode
+      ? (analysis.analysis?.lines[0]?.uci ?? null)
+      : (reviewPly?.best_uci ?? null);
+    if (!uci) return null;
+    const best = moveFromUci(uci);
     if (best.kind === "move") return { from: best.from, to: best.to };
     // A suggested drop has no origin square, so show the piece itself.
     return {
       from: null,
       to: best.to,
-      piece: { type: best.piece, color: reviewPly.color },
+      piece: {
+        type: best.piece,
+        color: analysisMode ? analysis.state.turn : (reviewPly?.color ?? "w"),
+      },
     };
-  }, [reviewPly]);
-  const badge = previousPly
-    ? { square: moveFromUci(previousPly.uci).to, classification: previousPly.classification }
-    : null;
-  const barScore = previousPly
-    ? { score: previousPly.eval_after, mate: previousPly.mate_after }
-    : review?.plies[0]
-      ? { score: review.plies[0].eval_before, mate: review.plies[0].mate_before }
-      : { score: 0, mate: null };
+  }, [analysisMode, analysis.analysis, analysis.state.turn, reviewPly]);
 
-  const flipped = mode === "bot" && humanSide === "b";
-  const canReview = uciMoves.length >= 2;
+  const badge =
+    !analysisMode && previousPly
+      ? { square: moveFromUci(previousPly.uci).to, classification: previousPly.classification }
+      : null;
 
+  const barScore = useMemo(() => {
+    if (analysisMode) {
+      if (!analysis.analysis) return { score: 0, mate: null as number | null };
+      const view = toWhiteRelative(
+        analysis.analysis.stm,
+        analysis.analysis.score,
+        analysis.analysis.mateIn,
+      );
+      return { score: view.score, mate: view.mateIn };
+    }
+    if (previousPly) return { score: previousPly.eval_after, mate: previousPly.mate_after };
+    if (review?.plies[0]) {
+      return { score: review.plies[0].eval_before, mate: review.plies[0].mate_before };
+    }
+    return { score: 0, mate: null as number | null };
+  }, [analysisMode, analysis.analysis, previousPly, review]);
+
+  /**
+   * Branches on one of the engine's review suggestions — "play what it says
+   * instead of what I did". `ply` is the position the move is played from,
+   * which for "best was…" is the position *before* the move that was played.
+   */
+  const playSuggestion = useCallback(
+    (ply: number, uci: string) => {
+      const from = positions[ply];
+      if (!from) return;
+      const wanted = moveFromUci(uci);
+      const move = legalMoves(from).find((candidate) => movesEqual(candidate, wanted));
+      if (move) openAnalysis(ply, move);
+    },
+    [positions, openAnalysis],
+  );
+
+  const playAnalysisLine = useCallback(
+    (uci: string) => {
+      const wanted = moveFromUci(uci);
+      const legal = analysis.moves.find((candidate) => movesEqual(candidate, wanted));
+      if (legal) analysis.play(legal);
+    },
+    [analysis],
+  );
+
+  /**
+   * Branches on the analysis board's "Best was …": that move belongs to the
+   * *parent* of the cursor — it is what should have been played instead of the
+   * move that reached this position — so it is resolved and played there.
+   */
+  const playAnalysisBest = useCallback(
+    (uci: string) => {
+      const parentId = analysis.tree.nodes[analysis.cursor]?.parent;
+      if (!parentId) return;
+      const wanted = moveFromUci(uci);
+      const from = positionAt(analysis.tree, parentId);
+      const move = legalMoves(from).find((candidate) => movesEqual(candidate, wanted));
+      if (move) analysis.playAt(parentId, move);
+    },
+    [analysis],
+  );
+
+  /**
+   * Back to the game review from the analysis board. The cursor's place on the
+   * main line is the ply the review should open at, so the board does not jump.
+   */
+  const backToReview = useCallback(() => {
+    if (!review) return;
+    const line = mainLine(analysis.tree);
+    const index = line.indexOf(analysis.cursor);
+    if (index >= 0) setViewPly(Math.min(index, review.plies.length));
+    setMode(returnMode ?? "human");
+    setEditing(false);
+  }, [review, analysis.tree, analysis.cursor, returnMode, setViewPly]);
+
+  /** Leaves the editor and hands the arranged position to the analysis tree. */
+  const analyseSetup = useCallback(() => {
+    if (setup.problem) return;
+    analysis.load(createTree(setup.state));
+    setEditing(false);
+  }, [setup.problem, setup.state, analysis]);
+
+  /** Back to the editor, seeded with whatever is on the analysis board now. */
+  const editPosition = useCallback(() => {
+    setup.load({
+      board: analysis.state.board.slice(),
+      reserves: {
+        w: { ...analysis.state.reserves.w },
+        b: { ...analysis.state.reserves.b },
+      },
+      turn: analysis.state.turn,
+    });
+    setEditing(true);
+  }, [setup, analysis.state]);
+
+  const checkSquare =
+    !setupMode && displayedOutcome.inCheck ? findKing(displayed.board, displayed.turn) : null;
+  const flipped = analysisMode ? flipBoard : mode === "bot" && humanSide === "b";
+  const canReview = uciMoves.length >= 2 && !analysisMode;
+  const showSidePanel = inReview || analysisMode;
+  /** No evaluation to show while the position is still being arranged. */
+  const showEvalBar = inReview || (analysisMode && !editing);
+  const boardPosition = setupMode ? setup.state : displayed;
+  const banks = setupMode ? setup.position.reserves : displayed.reserves;
+  const ghost = setupMode ? setup.drag : interaction.drag;
+  const boardWidth = () => boardRef.current?.getBoundingClientRect().width ?? 0;
+  const cursorNode = analysis.tree.nodes[analysis.cursor];
 
   return (
     <div
@@ -431,11 +718,11 @@ export default function TinyhouseGame() {
             style={{ backgroundColor: theme.surface, color: theme.surfaceText }}
             aria-live="polite"
           >
-            {!outcome.over && (
+            {!setupMode && !displayedOutcome.over && (
               <span
                 className={`h-2.5 w-2.5 rounded-full border ${thinking ? "animate-pulse" : ""}`}
                 style={{
-                  backgroundColor: game.turn === "w" ? theme.whitePiece : theme.blackPiece,
+                  backgroundColor: active.turn === "w" ? theme.whitePiece : theme.blackPiece,
                   borderColor: theme.label,
                 }}
               />
@@ -444,12 +731,67 @@ export default function TinyhouseGame() {
           </span>
         </div>
 
-        <span className="text-xs opacity-60 sm:text-sm">
-          {mode === "bot"
-            ? `vs ${levels.find((entry) => entry.level === level)?.name ?? "Bot"}`
-            : "2 players"}
-        </span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={toggleMuted}
+            aria-pressed={muted}
+            aria-label={muted ? "Unmute sounds" : "Mute sounds"}
+            title={muted ? "Unmute sounds" : "Mute sounds"}
+            className="rounded-full px-3 py-1 text-xs font-bold"
+            style={{ backgroundColor: theme.surface, color: theme.surfaceText }}
+          >
+            {muted ? "🔇" : "🔊"}
+          </button>
+          {analysisMode && (
+            <button
+              type="button"
+              onClick={() => setFlipBoard((current) => !current)}
+              className="rounded-full px-3 py-1 text-xs font-bold"
+              style={{ backgroundColor: theme.surface, color: theme.surfaceText }}
+            >
+              Flip
+            </button>
+          )}
+          <span className="text-xs opacity-60 sm:text-sm">
+            {analysisMode
+              ? "Analysis"
+              : mode === "bot"
+                ? `vs ${levels.find((entry) => entry.level === level)?.name ?? "Bot"}`
+                : enginesMode
+                  ? "Bot vs Bot"
+                  : "2 players"}
+          </span>
+        </div>
       </header>
+
+      {restored !== null && (
+        <div
+          className="mx-3 mb-2 flex shrink-0 items-center gap-3 rounded-lg px-3 py-2 text-xs"
+          style={{ backgroundColor: theme.surface, color: theme.surfaceText }}
+          role="status"
+        >
+          <span className="flex-1">
+            Resumed your game ({restored} {restored === 1 ? "move" : "moves"}).
+          </span>
+          <button
+            type="button"
+            onClick={() => setRestored(null)}
+            className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide"
+            style={{ backgroundColor: theme.overlay }}
+          >
+            Keep
+          </button>
+          <button
+            type="button"
+            onClick={newMatch}
+            className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide"
+            style={{ backgroundColor: theme.accent, color: theme.backdrop }}
+          >
+            Discard
+          </button>
+        </div>
+      )}
 
       {engineError && (
         <div
@@ -480,12 +822,23 @@ export default function TinyhouseGame() {
           humanSide={humanSide}
           levels={levels}
           started={started}
+          gameOver={outcome.over}
           canReview={canReview}
           reviewing={reviewing}
           inReview={inReview}
+          canAnalyse={game.history.length > 0}
           open={settingsOpen}
+          engineLevels={engineLevels}
+          moveDelayMs={moveDelayMs}
+          paused={paused}
           onToggle={() => setSettingsOpen((current) => !current)}
-          onModeChange={setMode}
+          onModeChange={(next) => {
+            setMode(next);
+            if (next === "analysis") {
+              setup.reset();
+              setEditing(true);
+            }
+          }}
           onLevelChange={setLevel}
           onSideChange={setHumanSide}
           onStart={() => {
@@ -500,7 +853,14 @@ export default function TinyhouseGame() {
             setSettingsOpen(false);
             startReview();
           }}
+          onAnalyse={() => openAnalysis(viewPly)}
           onThemeSelect={selectTheme}
+          onEngineLevelChange={(color, next) =>
+            setEngineLevels((current) => ({ ...current, [color]: next }))
+          }
+          onDelayChange={setMoveDelayMs}
+          onTogglePause={() => setPaused((current) => !current)}
+          onStep={() => setSteps(1)}
         />
 
         {/* Board and reserves, sized from the space that is left so the page
@@ -512,11 +872,13 @@ export default function TinyhouseGame() {
         >
           <div
             className={`flex flex-col items-stretch gap-2 sm:flex-row ${
-              inReview ? "[--extra:-6.5rem] sm:[--extra:10rem]" : "[--extra:-6.5rem] sm:[--extra:8rem]"
+              showEvalBar
+                ? "[--extra:-6.5rem] sm:[--extra:10rem]"
+                : "[--extra:-6.5rem] sm:[--extra:8rem]"
             }`}
             style={{ width: "min(100cqw, calc(100cqh + var(--extra)))" }}
           >
-            {inReview && (
+            {showEvalBar && (
               <EvalBar
                 score={barScore.score}
                 mateIn={barScore.mate}
@@ -527,127 +889,232 @@ export default function TinyhouseGame() {
 
             <ReserveBank
               color="b"
-              reserve={displayed.reserves.b}
+              reserve={banks.b}
               theme={theme}
-              active={!locked && game.turn === "b"}
+              editable={setupMode}
+              active={setupMode ? setup.position.turn === "b" : !locked && active.turn === "b"}
               selectedPiece={
-                game.turn === "b" && selection?.kind === "reserve" ? selection.piece : null
+                !setupMode && active.turn === "b" && interaction.selection?.kind === "reserve"
+                  ? interaction.selection.piece
+                  : null
               }
-              draggingPiece={drag?.origin.kind === "reserve" ? drag.origin.piece : null}
-              onPointerDown={(event, piece) => handlePointerDown(event, { kind: "reserve", piece })}
-              onActivate={(piece) => activate({ kind: "reserve", piece })}
+              draggingPiece={
+                !setupMode && interaction.drag?.origin.kind === "reserve"
+                  ? interaction.drag.origin.piece
+                  : null
+              }
+              onPointerDown={(event, piece) =>
+                setupMode
+                  ? setup.handlePointerDown(event, { kind: "bank", color: "b", piece }, boardWidth())
+                  : interaction.handlePointerDown(event, { kind: "reserve", piece })
+              }
+              onActivate={(piece) =>
+                setupMode
+                  ? setup.activateBank("b", piece)
+                  : interaction.activate({ kind: "reserve", piece })
+              }
             />
 
             <div className="relative min-w-0 flex-1">
-            <Board
-              board={displayed.board}
-              theme={theme}
-              boardRef={boardRef}
-              targets={targets}
-              selectedSquare={selection?.kind === "square" ? selection.square : null}
-              dragOriginSquare={drag?.origin.kind === "square" ? drag.origin.square : null}
-              checkSquare={checkSquare}
-              lastMove={displayed.lastMove}
-              disabled={locked}
-              flipped={flipped}
-              arrow={arrow}
-              badge={badge}
-              onSquarePointerDown={(event, square) =>
-                handlePointerDown(event, { kind: "square", square })
-              }
-              onSquareActivate={(square) => activate({ kind: "square", square })}
-            />
+              <Board
+                board={boardPosition.board}
+                theme={theme}
+                boardRef={boardRef}
+                targets={setupMode ? EMPTY_TARGETS : interaction.targets}
+                selectedSquare={
+                  !setupMode && interaction.selection?.kind === "square"
+                    ? interaction.selection.square
+                    : null
+                }
+                dragOriginSquare={
+                  !setupMode && interaction.drag?.origin.kind === "square"
+                    ? interaction.drag.origin.square
+                    : null
+                }
+                checkSquare={checkSquare}
+                lastMove={setupMode ? null : displayed.lastMove}
+                disabled={setupMode ? false : locked}
+                flipped={flipped}
+                arrow={setupMode ? null : arrow}
+                badge={setupMode ? null : badge}
+                onSquarePointerDown={(event, square) =>
+                  setupMode
+                    ? setup.handlePointerDown(event, { kind: "square", square }, boardWidth())
+                    : interaction.handlePointerDown(event, { kind: "square", square })
+                }
+                onSquareActivate={(square) =>
+                  setupMode
+                    ? setup.activateSquare(square)
+                    : interaction.activate({ kind: "square", square })
+                }
+              />
 
-            {outcome.over && !inReview && (
-              <div className="absolute inset-0 z-20 flex items-center justify-center rounded-lg bg-black/45 sm:rounded-xl">
-                <div
-                  className="flex flex-col items-center gap-3 rounded-xl px-6 py-4 text-center shadow-2xl"
-                  style={{ backgroundColor: theme.surface, color: theme.surfaceText }}
-                >
-                  <p className="text-base font-bold sm:text-lg">{status}</p>
-                  <div className="flex gap-2">
-                    {canReview && (
+              {outcome.over && !inReview && !analysisMode && !rewound && (
+                <div className="absolute inset-0 z-20 flex items-center justify-center rounded-lg bg-black/45 sm:rounded-xl">
+                  <div
+                    className="flex flex-col items-center gap-3 rounded-xl px-6 py-4 text-center shadow-2xl"
+                    style={{ backgroundColor: theme.surface, color: theme.surfaceText }}
+                  >
+                    <p className="text-base font-bold sm:text-lg">{status}</p>
+                    <div className="flex flex-wrap justify-center gap-2">
+                      {canReview && (
+                        <button
+                          type="button"
+                          onClick={() => startReview()}
+                          disabled={reviewing}
+                          className="rounded-full px-4 py-1.5 text-xs font-bold uppercase tracking-wide disabled:opacity-50"
+                          style={{ backgroundColor: theme.surfaceText, color: theme.surface }}
+                        >
+                          {reviewing ? "Analysing…" : "Review game"}
+                        </button>
+                      )}
                       <button
                         type="button"
-                        onClick={startReview}
-                        disabled={reviewing}
-                        className="rounded-full px-4 py-1.5 text-xs font-bold uppercase tracking-wide disabled:opacity-50"
-                        style={{ backgroundColor: theme.surfaceText, color: theme.surface }}
+                        onClick={() => openAnalysis(game.history.length)}
+                        className="rounded-full px-4 py-1.5 text-xs font-bold uppercase tracking-wide"
+                        style={{ backgroundColor: theme.overlayStrong }}
                       >
-                        {reviewing ? "Analysing…" : "Review game"}
+                        Analyse
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={startMatch}
-                      className="rounded-full px-4 py-1.5 text-xs font-bold uppercase tracking-wide"
-                      style={{ backgroundColor: theme.accent, color: theme.backdrop }}
-                    >
-                      Rematch
-                    </button>
+                      <button
+                        type="button"
+                        onClick={startMatch}
+                        className="rounded-full px-4 py-1.5 text-xs font-bold uppercase tracking-wide"
+                        style={{ backgroundColor: theme.accent, color: theme.backdrop }}
+                      >
+                        Rematch
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {!started && (
-              <div className="absolute inset-0 z-20 flex items-center justify-center rounded-lg bg-black/50 sm:rounded-xl">
-                <button
-                  type="button"
-                  onClick={startMatch}
-                  className="rounded-xl px-6 py-3 text-sm font-black uppercase tracking-wide shadow-2xl transition hover:brightness-110"
-                  style={{ backgroundColor: theme.accent, color: theme.backdrop }}
-                >
-                  Start match
-                </button>
-              </div>
-            )}
+              {!started && !analysisMode && (
+                <div className="absolute inset-0 z-20 flex items-center justify-center rounded-lg bg-black/50 sm:rounded-xl">
+                  <button
+                    type="button"
+                    onClick={startMatch}
+                    className="rounded-xl px-6 py-3 text-sm font-black uppercase tracking-wide shadow-2xl transition hover:brightness-110"
+                    style={{ backgroundColor: theme.accent, color: theme.backdrop }}
+                  >
+                    Start match
+                  </button>
+                </div>
+              )}
             </div>
 
             <ReserveBank
               color="w"
-              reserve={displayed.reserves.w}
+              reserve={banks.w}
               theme={theme}
-              active={!locked && game.turn === "w"}
+              editable={setupMode}
+              active={setupMode ? setup.position.turn === "w" : !locked && active.turn === "w"}
               selectedPiece={
-                game.turn === "w" && selection?.kind === "reserve" ? selection.piece : null
+                !setupMode && active.turn === "w" && interaction.selection?.kind === "reserve"
+                  ? interaction.selection.piece
+                  : null
               }
-              draggingPiece={drag?.origin.kind === "reserve" ? drag.origin.piece : null}
-              onPointerDown={(event, piece) => handlePointerDown(event, { kind: "reserve", piece })}
-              onActivate={(piece) => activate({ kind: "reserve", piece })}
+              draggingPiece={
+                !setupMode && interaction.drag?.origin.kind === "reserve"
+                  ? interaction.drag.origin.piece
+                  : null
+              }
+              onPointerDown={(event, piece) =>
+                setupMode
+                  ? setup.handlePointerDown(event, { kind: "bank", color: "w", piece }, boardWidth())
+                  : interaction.handlePointerDown(event, { kind: "reserve", piece })
+              }
+              onActivate={(piece) =>
+                setupMode
+                  ? setup.activateBank("w", piece)
+                  : interaction.activate({ kind: "reserve", piece })
+              }
             />
           </div>
         </div>
 
         <aside
-          className={`${inReview ? "flex max-h-[45%] xl:max-h-full" : "hidden xl:flex"} w-full shrink-0 flex-col gap-3 overflow-hidden rounded-xl p-3 xl:w-64 xl:flex xl:self-center`}
+          className={`${
+            showSidePanel ? "flex max-h-[45%] md:max-h-full" : "hidden xl:flex"
+          } w-full shrink-0 flex-col gap-3 overflow-hidden rounded-xl p-3 md:w-52 xl:w-64 xl:flex xl:self-center`}
           style={{ backgroundColor: theme.surface, color: theme.surfaceText }}
         >
-          {review ? (
+          {setupMode ? (
+            <SetupPanel
+              theme={theme}
+              tool={setup.tool}
+              onToolChange={setup.setTool}
+              turn={setup.position.turn}
+              onTurnChange={setup.setTurn}
+              problem={setup.problem}
+              onAnalyse={analyseSetup}
+              onClear={setup.clear}
+              onReset={setup.reset}
+            />
+          ) : analysisMode ? (
+            <AnalysisPanel
+              theme={theme}
+              analysis={analysis.analysis}
+              analysing={analysis.analysing}
+              analysisError={analysis.analysisError}
+              outcome={analysis.outcome}
+              tree={analysis.tree}
+              cursor={analysis.cursor}
+              onSelect={analysis.goTo}
+              onPromote={analysis.promote}
+              onDelete={analysis.deleteNode}
+              onPlayLine={playAnalysisLine}
+              onPlayBest={playAnalysisBest}
+              onStart={analysis.toStart}
+              onBack={analysis.back}
+              onForward={analysis.forward}
+              onEnd={analysis.toEnd}
+              canBack={Boolean(cursorNode?.parent)}
+              canForward={Boolean(cursorNode?.children.length)}
+              onEditPosition={editPosition}
+              verdicts={analysis.verdicts}
+              onBackToReview={review ? backToReview : undefined}
+              depth={analysisDepth}
+              onDepthChange={(next) => setAnalysisDepth(clampDepth(next))}
+            />
+          ) : review ? (
             <ReviewPanel
               review={review}
               theme={theme}
-              position={reviewPosition}
-              onSelect={setReviewPosition}
+              position={viewPly}
+              onSelect={setViewPly}
+              onPlay={playSuggestion}
               onClose={closeReview}
+              depth={reviewDepth}
+              onDepthChange={changeReviewDepth}
+              reviewing={reviewing}
             />
           ) : (
             <>
-              <div className="min-h-0 flex-1">
-                <h2 className="mb-1 text-xs font-bold uppercase tracking-wide opacity-70">Moves</h2>
-                <div className="max-h-64 overflow-y-auto text-sm tabular-nums">
-                  {historyRows.length === 0 && <p className="opacity-60">No moves yet.</p>}
-                  {historyRows.map((row) => (
-                    <div key={row.number} className="flex gap-2 py-0.5">
-                      <span className="w-6 opacity-60">{row.number}.</span>
-                      <span className="w-16 font-semibold">{row.white ?? ""}</span>
-                      <span className="w-16 font-semibold">{row.black ?? ""}</span>
-                    </div>
-                  ))}
+              <div className="flex min-h-0 flex-1 flex-col gap-2">
+                <h2 className="text-xs font-bold uppercase tracking-wide opacity-70">Moves</h2>
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <MoveTreeList
+                    tree={liveTree}
+                    cursor={liveCursor}
+                    theme={theme}
+                    onSelect={selectLivePly}
+                  />
                 </div>
+                <BoardNav
+                  theme={theme}
+                  onStart={toStart}
+                  onBack={stepBack}
+                  onForward={stepForward}
+                  onEnd={toLive}
+                  canBack={viewPly > 0}
+                  canForward={rewound}
+                  atLive={!rewound}
+                  onLive={toLive}
+                />
               </div>
 
-              <div className="border-t pt-2" style={{ borderColor: "rgba(255,255,255,0.12)" }}>
+              <div className="border-t pt-2" style={{ borderColor: theme.overlay }}>
                 <h2 className="mb-1 text-xs font-bold uppercase tracking-wide opacity-70">Pieces</h2>
                 <ul className="flex flex-col gap-1.5 text-xs leading-tight">
                   {PIECE_LEGEND.map((item) => (
@@ -670,19 +1137,19 @@ export default function TinyhouseGame() {
         </aside>
       </main>
 
-      {drag && drag.moved && (
+      {ghost && ghost.moved && (
         <div
           className="pointer-events-none fixed z-50"
           style={{
-            left: drag.x - drag.size / 2,
-            top: drag.y - drag.size / 2,
-            width: drag.size,
-            height: drag.size,
+            left: ghost.x - ghost.size / 2,
+            top: ghost.y - ghost.size / 2,
+            width: ghost.size,
+            height: ghost.size,
           }}
         >
           <PieceIcon
-            type={drag.piece.type}
-            color={drag.piece.color}
+            type={ghost.piece.type}
+            color={ghost.piece.color}
             theme={theme}
             className="h-full w-full"
             style={{ filter: "drop-shadow(0 6px 8px rgba(0,0,0,0.5))" }}
@@ -690,21 +1157,14 @@ export default function TinyhouseGame() {
         </div>
       )}
 
-      {promotion && (
+      {interaction.promotion && (
         <PromotionDialog
-          color={game.turn}
-          square={promotion.square}
-          options={promotion.options}
+          color={active.turn}
+          square={interaction.promotion.square}
+          options={interaction.promotion.options}
           theme={theme}
-          onChoose={(move) => {
-            setPromotion(null);
-            setGame((current) => applyMove(current, move));
-            setSelection(null);
-          }}
-          onCancel={() => {
-            setPromotion(null);
-            setSelection(null);
-          }}
+          onChoose={interaction.choosePromotion}
+          onCancel={interaction.cancelPromotion}
         />
       )}
     </div>

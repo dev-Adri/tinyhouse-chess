@@ -409,3 +409,84 @@ export function applyMove(state: GameState, move: Move): GameState {
 
   return next;
 }
+
+/** A position assembled by hand, with no moves behind it. */
+export function stateFrom(
+  board: Board,
+  reserves: Record<Color, Reserve>,
+  turn: Color,
+): GameState {
+  const state: GameState = { board, turn, reserves, lastMove: null, history: [], keys: [] };
+  state.keys = [toFen(state)];
+  return state;
+}
+
+/**
+ * Reads back what `toFen` writes. Returns null for anything malformed, so a
+ * stored or hand-typed position can never become a board that cannot exist.
+ */
+export function fromFen(fen: string): GameState | null {
+  const match = /^([^[\]\s]+)\[([^\]]*)\]\s+([wb])$/.exec(fen.trim());
+  if (!match) return null;
+  const [, layout, hands, turn] = match;
+
+  const rows = layout.split("/");
+  if (rows.length !== 4) return null;
+
+  const board: Board = Array(SQUARE_COUNT).fill(null);
+  for (let row = 0; row < 4; row++) {
+    // The FEN lists Black's base rank first.
+    const rank = 3 - row;
+    const text = rows[row];
+    let file = 0;
+    for (let i = 0; i < text.length; i++) {
+      const symbol = text[i];
+      if (symbol >= "1" && symbol <= "4") {
+        file += Number(symbol);
+        continue;
+      }
+      const type = symbol.toUpperCase() as PieceType;
+      if (!PIECE_NAMES[type] || file > 3) return null;
+      const promoted = text[i + 1] === "~";
+      if (promoted) i += 1;
+      board[idx(file, rank)] = {
+        type,
+        color: symbol === type ? "w" : "b",
+        ...(promoted ? { promoted: true } : {}),
+      };
+      file += 1;
+    }
+    if (file !== 4) return null;
+  }
+
+  const reserves: Record<Color, Reserve> = { w: emptyReserve(), b: emptyReserve() };
+  for (const symbol of hands) {
+    const type = symbol.toUpperCase() as DropType;
+    if (!DROP_TYPES.includes(type)) return null;
+    reserves[symbol === type ? "w" : "b"][type] += 1;
+  }
+
+  return stateFrom(board, reserves, turn as Color);
+}
+
+/**
+ * Why a hand-built position cannot be analysed, or null when it can.
+ *
+ * The board editor deliberately allows anything while you are arranging it;
+ * these are the conditions the rules and the engine actually depend on.
+ */
+export function setupProblem(state: GameState): string | null {
+  const kings = { w: 0, b: 0 };
+  for (const piece of state.board) {
+    if (piece?.type === "K") kings[piece.color] += 1;
+  }
+  if (kings.w !== 1) return "White needs exactly one king.";
+  if (kings.b !== 1) return "Black needs exactly one king.";
+
+  // The side that just moved cannot still be under attack.
+  const waiting: Color = state.turn === "w" ? "b" : "w";
+  if (isInCheck(state.board, waiting)) {
+    return `${waiting === "w" ? "White" : "Black"} is in check but it is not their move.`;
+  }
+  return null;
+}

@@ -9,6 +9,8 @@ import {
 } from "@/app/lib/engine/classification";
 import type { GameReview } from "@/app/lib/engine/types";
 import type { BoardTheme } from "@/app/lib/tinyhouse/themes";
+import ClassificationBadge from "./ClassificationBadge";
+import DepthStepper from "./DepthStepper";
 
 interface ReviewPanelProps {
   review: GameReview;
@@ -16,7 +18,13 @@ interface ReviewPanelProps {
   /** 0 = starting position, i + 1 = the position after ply i. */
   position: number;
   onSelect: (position: number) => void;
+  /** Plays `uci` from the position after `ply` half-moves, branching there. */
+  onPlay: (ply: number, uci: string) => void;
   onClose: () => void;
+  depth: number;
+  /** Changing the depth re-runs the whole review, so this is a commit. */
+  onDepthChange: (depth: number) => void;
+  reviewing: boolean;
 }
 
 export default function ReviewPanel({
@@ -24,7 +32,11 @@ export default function ReviewPanel({
   theme,
   position,
   onSelect,
+  onPlay,
   onClose,
+  depth,
+  onDepthChange,
+  reviewing,
 }: ReviewPanelProps) {
   const { plies } = review;
 
@@ -48,15 +60,37 @@ export default function ReviewPanel({
 
   const move = (delta: number) => onSelect(Math.max(0, Math.min(plies.length, position + delta)));
 
+  /** A suggestion you can take up: playing it opens an alternate line. */
+  const suggestion = (ply: number, uci: string, san: string) => (
+    <button
+      type="button"
+      onClick={() => onPlay(ply, uci)}
+      title="Play this move instead — opens an alternate line"
+      className="rounded px-1 font-bold underline decoration-dotted underline-offset-2 transition hover:brightness-125"
+      style={{ backgroundColor: theme.overlayStrong }}
+    >
+      {san}
+    </button>
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
-      <div className="flex items-center justify-between">
+      {/* Wraps rather than clips: the panel is narrow and the aside hides
+          overflow, so the stepper must be free to drop to a second line. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
         <h2 className="text-sm font-black uppercase tracking-wide">Game review</h2>
+        <DepthStepper
+          theme={theme}
+          value={depth}
+          onChange={onDepthChange}
+          disabled={reviewing}
+          title="Re-runs the review at this depth"
+        />
         <button
           type="button"
           onClick={onClose}
           className="rounded-full px-2 py-0.5 text-xs font-bold opacity-70 hover:opacity-100"
-          style={{ backgroundColor: "rgba(255,255,255,0.1)" }}
+          style={{ backgroundColor: theme.overlay }}
         >
           Close
         </button>
@@ -68,7 +102,7 @@ export default function ReviewPanel({
           <div
             key={color}
             className="rounded-lg px-2 py-1.5 text-center"
-            style={{ backgroundColor: "rgba(255,255,255,0.07)" }}
+            style={{ backgroundColor: theme.overlay }}
           >
             <div className="text-[10px] font-bold uppercase tracking-wide opacity-70">
               {color === "w" ? "White" : "Black"}
@@ -122,7 +156,7 @@ export default function ReviewPanel({
             title={button.title}
             onClick={() => move(button.delta)}
             className="h-8 flex-1 rounded text-sm font-bold transition hover:brightness-125"
-            style={{ backgroundColor: "rgba(255,255,255,0.1)" }}
+            style={{ backgroundColor: theme.overlay }}
           >
             {button.label}
           </button>
@@ -133,17 +167,15 @@ export default function ReviewPanel({
           between one and three lines. */}
       <div
         className="h-[4.75rem] shrink-0 overflow-hidden rounded-lg px-2 py-1.5 text-xs leading-snug"
-        style={{ backgroundColor: "rgba(255,255,255,0.07)" }}
+        style={{ backgroundColor: theme.overlay }}
       >
         {selected ? (
           <>
             <div className="flex items-center gap-2">
-              <span
-                className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-black text-white"
-                style={{ backgroundColor: CLASSIFICATION_STYLE[selected.classification].color }}
-              >
-                {CLASSIFICATION_STYLE[selected.classification].glyph}
-              </span>
+              <ClassificationBadge
+                classification={selected.classification}
+                className="h-5 w-5 xl:h-6 xl:w-6"
+              />
               <span className="font-bold">
                 {Math.floor(selected.ply / 2) + 1}
                 {selected.color === "w" ? "." : "..."} {selected.san}
@@ -157,7 +189,8 @@ export default function ReviewPanel({
             </div>
             {selected.classification !== "best" && selected.classification !== "forced" && (
               <div className="mt-1 opacity-80">
-                Best was <strong>{selected.best_san}</strong> ({formatScore(selected.eval_before, selected.mate_before)})
+                Best was {suggestion(position - 1, selected.best_uci, selected.best_san)} (
+                {formatScore(selected.eval_before, selected.mate_before)})
                 {selected.loss > 0 && <> — lost {(selected.loss / 100).toFixed(1)}</>}
               </div>
             )}
@@ -167,10 +200,15 @@ export default function ReviewPanel({
         )}
         {upcoming && (
           <div className="mt-1 opacity-80">
-            Engine plays <strong>{upcoming.best_san}</strong> here.
+            Engine plays {suggestion(position, upcoming.best_uci, upcoming.best_san)} here.
           </div>
         )}
       </div>
+
+      <p className="shrink-0 text-[10px] leading-tight opacity-50">
+        Play any move on the board — or a suggestion above — to branch into an
+        alternate line from here.
+      </p>
 
       {/* Move list */}
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">
@@ -183,19 +221,17 @@ export default function ReviewPanel({
               type="button"
               onClick={() => onSelect(ply.ply + 1)}
               className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-xs"
-              style={{ backgroundColor: isSelected ? "rgba(255,255,255,0.16)" : "transparent" }}
+              style={{ backgroundColor: isSelected ? theme.overlayStrong : "transparent" }}
             >
               <span className="w-7 text-right opacity-50 tabular-nums">
                 {ply.color === "w" ? `${Math.floor(ply.ply / 2) + 1}.` : ""}
               </span>
               <span className="w-16 font-semibold">{ply.san}</span>
-              <span
-                className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] font-black text-white"
-                style={{ backgroundColor: style.color }}
+              <ClassificationBadge
+                classification={ply.classification}
+                className="h-4 w-4 xl:h-5 xl:w-5"
                 title={style.label}
-              >
-                {style.glyph}
-              </span>
+              />
               <span className="ml-auto tabular-nums opacity-70">
                 {formatScore(ply.eval_after, ply.mate_after)}
               </span>

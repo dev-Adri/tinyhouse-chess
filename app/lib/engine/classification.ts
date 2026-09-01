@@ -43,3 +43,19 @@ export function evalToShare(centipawns: number, mateIn: number | null): number {
   if (mateIn !== null && mateIn !== 0) return mateIn > 0 ? 1 : 0;
   return 1 / (1 + Math.exp(-centipawns / 300));
 }
+
+/**
+ * The engine scores a position from the side to move's point of view; every
+ * display in the app is White-relative, so black-to-move results are flipped.
+ */
+export function toWhiteRelative(
+  stm: "w" | "b",
+  centipawns: number,
+  mateIn: number | null,
+): { score: number; mateIn: number | null } {
+  const flip = stm === "b";
+  return {
+    score: flip ? -centipawns : centipawns,
+    mateIn: mateIn === null ? null : flip ? -mateIn : mateIn,
+  };
+}

@@ -49,6 +49,31 @@ export interface BestMoveResponse {
   top: EngineLine[];
 }
 
+/** One candidate move from /analyse, with the line the engine expects after it. */
+export interface AnalysisLine {
+  uci: string;
+  san: string;
+  score: number;
+  scoreWhite: number;
+  mateIn: number | null;
+  pv: string[];
+}
+
+export interface AnalysisResult {
+  /** Set when the position is already decided; `lines` is then empty. */
+  gameOver: "checkmate" | "stalemate" | "repetition" | "ply-limit" | null;
+  winner: "w" | "b" | null;
+  /** Centipawns from the side to move's point of view. */
+  score: number;
+  scoreWhite: number;
+  mateIn: number | null;
+  depth: number;
+  nodes: number;
+  timeMs: number;
+  stm: "w" | "b";
+  lines: AnalysisLine[];
+}
+
 export interface PlyReview {
   ply: number;
   color: "w" | "b";
